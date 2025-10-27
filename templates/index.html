@@ -542,16 +542,16 @@
 
                             <div class="bet-details">
                                 <div class="detail-item">
-                                    <div class="detail-label">Prediction Probability</div>
-                                    <div class="detail-value highlight">${bet.probability.toFixed(1)}%</div>
+                                    <div class="detail-label">AI Prediction</div>
+                                    <div class="detail-value highlight">${bet.ai_probability.toFixed(1)}%</div>
                                 </div>
                                 <div class="detail-item">
-                                    <div class="detail-label">Market Average</div>
-                                    <div class="detail-value">${bet.avg_market_odds.toFixed(2)}</div>
+                                    <div class="detail-label">Market Consensus</div>
+                                    <div class="detail-value">${bet.market_probability.toFixed(1)}%</div>
                                 </div>
                                 <div class="detail-item">
-                                    <div class="detail-label">Odds Value</div>
-                                    <div class="detail-value ${oddsValueClass}">${bet.odds_value > 0 ? '+' : ''}${bet.odds_value.toFixed(1)}%</div>
+                                    <div class="detail-label">Best Odds</div>
+                                    <div class="detail-value highlight">${bet.odds.toFixed(2)}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Expected Value</div>
@@ -560,7 +560,7 @@
                                     </div>
                                 </div>
                                 <div class="detail-item">
-                                    <div class="detail-label">£10 Stake Returns</div>
+                                    <div class="detail-label">£10 Returns</div>
                                     <div class="detail-value highlight">£${(10 * bet.odds).toFixed(2)}</div>
                                 </div>
                                 <div class="detail-item">
@@ -637,6 +637,10 @@
                                 <div class="acca-total-item">
                                     <div class="acca-total-label">Avg Confidence</div>
                                     <div class="acca-total-value">${acca.average_confidence.toFixed(1)}%</div>
+                                </div>
+                                <div class="acca-total-item">
+                                    <div class="acca-total-label">Realistic Win %</div>
+                                    <div class="acca-total-value">${acca.realistic_confidence.toFixed(1)}%</div>
                                 </div>
                                 <div class="acca-total-item">
                                     <div class="acca-total-label">Stake</div>
