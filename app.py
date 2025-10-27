@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-10bet Betting Optimizer - FIXED VERSION
-Working with correct API-Football data structure
+Smart Betting Optimizer - Uses ALL API-Football Data
+Analyzes: Predictions, Form, H2H, Statistics, Best Odds
+Focus: Find ACTUAL winning bets, not just high odds
 """
 
 from flask import Flask, render_template, jsonify, request
@@ -16,7 +17,7 @@ app = Flask(__name__)
 API_KEY = os.environ.get('API_SPORTS_KEY', '')
 BASE_URL = "https://v3.football.api-sports.io"
 
-class BettingAnalyzer:
+class SmartBettingAnalyzer:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = BASE_URL
@@ -67,16 +68,16 @@ class BettingAnalyzer:
         return upcoming
     
     def get_fixture_odds(self, fixture_id: int) -> Optional[Dict]:
-        """Get odds for specific fixture - returns the odds response object"""
+        """Get all bookmaker odds"""
         data = self.make_request('odds', params={'fixture': fixture_id})
         
         if not data or 'response' not in data or len(data['response']) == 0:
             return None
         
-        return data['response'][0]  # Return first odds object
+        return data['response'][0]
     
-    def get_fixture_predictions(self, fixture_id: int) -> Optional[Dict]:
-        """Get predictions for specific fixture"""
+    def get_predictions(self, fixture_id: int) -> Optional[Dict]:
+        """Get AI predictions with percentages and advice"""
         data = self.make_request('predictions', params={'fixture': fixture_id})
         
         if not data or 'response' not in data or len(data['response']) == 0:
@@ -84,76 +85,86 @@ class BettingAnalyzer:
         
         return data['response'][0]
     
-    def find_10bet_odds(self, odds_response: Dict) -> Tuple[float, float, float, bool]:
-        """Extract 10bet odds from odds response - FIXED structure"""
-        bookmakers = odds_response.get('bookmakers', [])
+    def get_head_to_head(self, team1_id: int, team2_id: int) -> Optional[List[Dict]]:
+        """Get head to head history"""
+        data = self.make_request('fixtures/headtohead', params={
+            'h2h': f"{team1_id}-{team2_id}"
+        })
         
-        for bookmaker in bookmakers:
-            bookmaker_name = bookmaker.get('name', '').lower()
-            bookmaker_id = bookmaker.get('id', 0)
-            
-            # Look for 10bet
-            if '10bet' in bookmaker_name or bookmaker_id == 1:
-                bets = bookmaker.get('bets', [])
-                
-                for bet in bets:
-                    # Find Match Winner market (ID: 1)
-                    if bet.get('name') == 'Match Winner' or bet.get('id') == 1:
-                        values = bet.get('values', [])
-                        home_odds = 0.0
-                        draw_odds = 0.0
-                        away_odds = 0.0
-                        
-                        for value in values:
-                            odd_value = float(value.get('odd', 0))
-                            value_name = value.get('value', '').lower()
-                            
-                            if value_name in ['home', '1']:
-                                home_odds = odd_value
-                            elif value_name in ['draw', 'x']:
-                                draw_odds = odd_value
-                            elif value_name in ['away', '2']:
-                                away_odds = odd_value
-                        
-                        if home_odds > 0 and draw_odds > 0 and away_odds > 0:
-                            print(f"    ✅ Found 10bet: H:{home_odds} D:{draw_odds} A:{away_odds}")
-                            return (home_odds, draw_odds, away_odds, True)
+        if not data or 'response' not in data:
+            return None
         
-        return (0.0, 0.0, 0.0, False)
+        return data['response'][:5]  # Last 5 matches
     
-    def get_best_odds(self, odds_response: Dict) -> Tuple[float, float, float, str]:
-        """Get best available odds from any bookmaker"""
+    def get_team_statistics(self, fixture_id: int) -> Optional[Dict]:
+        """Get detailed team statistics for fixture"""
+        data = self.make_request('fixtures/statistics', params={'fixture': fixture_id})
+        
+        if not data or 'response' not in data:
+            return None
+        
+        return data['response']
+    
+    def extract_best_odds(self, odds_response: Dict) -> Tuple[float, float, float, str, bool]:
+        """Get BEST odds across all bookmakers + check if 10bet available"""
         bookmakers = odds_response.get('bookmakers', [])
         
+        best_home = 0.0
+        best_draw = 0.0
+        best_away = 0.0
+        best_bookmaker = 'Unknown'
+        has_10bet = False
+        tenbet_home = 0.0
+        tenbet_draw = 0.0
+        tenbet_away = 0.0
+        
         for bookmaker in bookmakers:
-            bookmaker_name = bookmaker.get('name', 'Unknown')
+            bookmaker_name = bookmaker.get('name', '')
+            bookmaker_id = bookmaker.get('id', 0)
             bets = bookmaker.get('bets', [])
+            
+            # Check if this is 10bet
+            is_10bet = ('10bet' in bookmaker_name.lower() or bookmaker_id == 1)
             
             for bet in bets:
                 if bet.get('name') == 'Match Winner' or bet.get('id') == 1:
                     values = bet.get('values', [])
-                    home_odds = 0.0
-                    draw_odds = 0.0
-                    away_odds = 0.0
+                    home = 0.0
+                    draw = 0.0
+                    away = 0.0
                     
                     for value in values:
                         odd_value = float(value.get('odd', 0))
                         value_name = value.get('value', '').lower()
                         
                         if value_name in ['home', '1']:
-                            home_odds = odd_value
+                            home = odd_value
                         elif value_name in ['draw', 'x']:
-                            draw_odds = odd_value
+                            draw = odd_value
                         elif value_name in ['away', '2']:
-                            away_odds = odd_value
+                            away = odd_value
                     
-                    if home_odds > 0 and draw_odds > 0 and away_odds > 0:
-                        return (home_odds, draw_odds, away_odds, bookmaker_name)
+                    if home > 0 and draw > 0 and away > 0:
+                        # Track 10bet
+                        if is_10bet:
+                            has_10bet = True
+                            tenbet_home = home
+                            tenbet_draw = draw
+                            tenbet_away = away
+                        
+                        # Track best odds
+                        if home > best_home:
+                            best_home = home
+                        if draw > best_draw:
+                            best_draw = draw
+                        if away > best_away:
+                            best_away = away
+                            best_bookmaker = bookmaker_name
         
-        return (0.0, 0.0, 0.0, 'Unknown')
+        return (best_home, best_draw, best_away, best_bookmaker, has_10bet)
     
-    def calculate_market_average(self, odds_response: Dict) -> Tuple[float, float, float]:
-        """Calculate average odds across all bookmakers"""
+    def calculate_market_consensus(self, odds_response: Dict) -> Tuple[float, float, float]:
+        """Calculate market-implied probabilities (consensus)"""
         bookmakers = odds_response.get('bookmakers', [])
         
         home_odds_list = []
@@ -172,109 +183,145 @@ class BettingAnalyzer:
                         value_name = value.get('value', '').lower()
                         
                         if odd_value > 0:
+                            # Convert odds to implied probability
+                            implied_prob = (1 / odd_value) * 100
+                            
                             if value_name in ['home', '1']:
-                                home_odds_list.append(odd_value)
+                                home_odds_list.append(implied_prob)
                             elif value_name in ['draw', 'x']:
-                                draw_odds_list.append(odd_value)
+                                draw_odds_list.append(implied_prob)
                             elif value_name in ['away', '2']:
-                                away_odds_list.append(odd_value)
+                                away_odds_list.append(implied_prob)
         
-        avg_home = sum(home_odds_list) / len(home_odds_list) if home_odds_list else 0.0
-        avg_draw = sum(draw_odds_list) / len(draw_odds_list) if draw_odds_list else 0.0
-        avg_away = sum(away_odds_list) / len(away_odds_list) if away_odds_list else 0.0
+        # Average market-implied probabilities
+        market_home = sum(home_odds_list) / len(home_odds_list) if home_odds_list else 0.0
+        market_draw = sum(draw_odds_list) / len(draw_odds_list) if draw_odds_list else 0.0
+        market_away = sum(away_odds_list) / len(away_odds_list) if away_odds_list else 0.0
         
-        return (avg_home, avg_draw, avg_away)
+        return (market_home, market_draw, market_away)
     
-    def get_prediction_probabilities(self, prediction_data: Optional[Dict]) -> Tuple[float, float, float]:
-        """Extract prediction probabilities"""
-        if not prediction_data:
-            return (0.0, 0.0, 0.0)
-        
-        try:
-            predictions = prediction_data.get('predictions', {})
-            percent = predictions.get('percent', {})
-            
-            home_prob = float(str(percent.get('home', '0')).replace('%', ''))
-            draw_prob = float(str(percent.get('draw', '0')).replace('%', ''))
-            away_prob = float(str(percent.get('away', '0')).replace('%', ''))
-            
-            return (home_prob, draw_prob, away_prob)
-        except:
-            return (0.0, 0.0, 0.0)
-    
-    def analyze_fixture(self, fixture: Dict) -> Optional[Dict]:
-        """Analyze a single fixture"""
+    def analyze_fixture_smart(self, fixture: Dict) -> Optional[Dict]:
+        """SMART analysis using ALL available data"""
         fixture_id = fixture['fixture']['id']
         home_team = fixture['teams']['home']['name']
         away_team = fixture['teams']['away']['name']
+        home_id = fixture['teams']['home']['id']
+        away_id = fixture['teams']['away']['id']
         league = fixture['league']['name']
         country = fixture['league']['country']
         match_time = fixture['fixture']['date']
         
-        # Get odds
-        odds_response = self.get_fixture_odds(fixture_id)
+        print(f"  📊 {home_team} vs {away_team}")
         
-        if not odds_response:
+        # 1. Get predictions (AI probabilities + advice)
+        predictions = self.get_predictions(fixture_id)
+        if not predictions:
+            print(f"      ❌ No predictions available")
             return None
         
-        # Check for 10bet odds
-        tenbet_home, tenbet_draw, tenbet_away, has_10bet = self.find_10bet_odds(odds_response)
+        pred_data = predictions.get('predictions', {})
+        percentages = pred_data.get('percent', {})
         
-        # Get best available odds
-        best_home, best_draw, best_away, bookmaker_name = self.get_best_odds(odds_response)
+        ai_home = float(str(percentages.get('home', '0')).replace('%', ''))
+        ai_draw = float(str(percentages.get('draw', '0')).replace('%', ''))
+        ai_away = float(str(percentages.get('away', '0')).replace('%', ''))
+        
+        advice = pred_data.get('advice', 'No advice')
+        winner_prediction = pred_data.get('winner', {})
+        winner_name = winner_prediction.get('name', 'Unknown')
+        
+        # 2. Get odds from all bookmakers
+        odds_response = self.get_fixture_odds(fixture_id)
+        if not odds_response:
+            print(f"      ❌ No odds available")
+            return None
+        
+        best_home, best_draw, best_away, best_bookmaker, has_10bet = self.extract_best_odds(odds_response)
         
         if best_home == 0.0 or best_draw == 0.0 or best_away == 0.0:
+            print(f"      ❌ Incomplete odds")
             return None
         
-        # Use 10bet if available, otherwise use best odds
-        if has_10bet:
-            home_odds = tenbet_home
-            draw_odds = tenbet_draw
-            away_odds = tenbet_away
-            odds_source = "10bet"
-        else:
-            home_odds = best_home
-            draw_odds = best_draw
-            away_odds = best_away
-            odds_source = bookmaker_name
+        # 3. Calculate market consensus (average implied probabilities)
+        market_home, market_draw, market_away = self.calculate_market_consensus(odds_response)
         
-        # Get market averages
-        avg_home, avg_draw, avg_away = self.calculate_market_average(odds_response)
+        # 4. SMART SCORING - Multiple factors
         
-        # Get predictions
-        prediction_data = self.get_fixture_predictions(fixture_id)
-        home_prob, draw_prob, away_prob = self.get_prediction_probabilities(prediction_data)
-        
-        # Determine best selection
-        selections = [
-            {'type': 'home', 'name': home_team, 'prob': home_prob, 'odds': home_odds, 'avg_odds': avg_home},
-            {'type': 'draw', 'name': 'Draw', 'prob': draw_prob, 'odds': draw_odds, 'avg_odds': avg_draw},
-            {'type': 'away', 'name': away_team, 'prob': away_prob, 'odds': away_odds, 'avg_odds': avg_away}
+        # Create options with all data
+        options = [
+            {
+                'type': 'home',
+                'name': home_team,
+                'ai_prob': ai_home,
+                'market_prob': market_home,
+                'best_odds': best_home
+            },
+            {
+                'type': 'draw',
+                'name': 'Draw',
+                'ai_prob': ai_draw,
+                'market_prob': market_draw,
+                'best_odds': best_draw
+            },
+            {
+                'type': 'away',
+                'name': away_team,
+                'ai_prob': ai_away,
+                'market_prob': market_away,
+                'best_odds': best_away
+            }
         ]
         
-        best_sel = max(selections, key=lambda x: x['prob'])
+        # Score each option
+        for option in options:
+            # Base score from AI prediction
+            score = option['ai_prob']
+            
+            # Factor 1: Agreement between AI and market (trust signal)
+            prob_diff = abs(option['ai_prob'] - option['market_prob'])
+            if prob_diff < 5:  # Close agreement
+                score += 15  # Strong trust bonus
+            elif prob_diff < 10:
+                score += 10
+            elif prob_diff < 15:
+                score += 5
+            else:
+                score -= 5  # Big disagreement, lower confidence
+            
+            # Factor 2: Value odds (when AI thinks it's more likely than market)
+            if option['ai_prob'] > option['market_prob']:
+                value_edge = option['ai_prob'] - option['market_prob']
+                score += value_edge * 0.5  # Bonus for value
+            
+            # Factor 3: Expected Value
+            ev = (option['ai_prob'] / 100 * option['best_odds']) - 1
+            if ev > 0.15:
+                score += 15
+            elif ev > 0.10:
+                score += 10
+            elif ev > 0.05:
+                score += 5
+            elif ev < 0:
+                score -= 10  # Negative EV is bad
+            
+            # Factor 4: Reasonable odds (avoid long shots)
+            if option['best_odds'] < 1.5:
+                score += 5  # Favorite bonus (more reliable)
+            elif option['best_odds'] > 4.0:
+                score -= 10  # Long shot penalty
+            
+            option['confidence_score'] = min(100, max(0, score))
+            option['expected_value'] = ev
         
-        # Calculate metrics
-        odds_value = ((best_sel['odds'] - best_sel['avg_odds']) / best_sel['avg_odds'] * 100) if best_sel['avg_odds'] > 0 else 0
-        expected_value = (best_sel['prob'] / 100 * best_sel['odds']) - 1
-        confidence = best_sel['prob']
+        # Pick best option by confidence score
+        best_option = max(options, key=lambda x: x['confidence_score'])
         
-        # Boost confidence
-        if odds_value > 5:
-            confidence += 10
-        if expected_value > 0.1:
-            confidence += 10
-        if has_10bet:
-            confidence += 5
+        # Only recommend if confidence >= 65%
+        if best_option['confidence_score'] < 65:
+            print(f"      ⚠️  Low confidence: {best_option['confidence_score']:.0f}% - Skipped")
+            return None
         
-        confidence = min(100, confidence)
-        
-        # Get advice
-        advice = "No advice available"
-        if prediction_data:
-            advice = prediction_data.get('predictions', {}).get('advice', 'No advice available')
-        
-        print(f"    ✅ {home_team} vs {away_team} - {odds_source} - Conf: {confidence:.0f}%")
+        print(f"      ✅ {best_option['name']} @ {best_option['best_odds']:.2f} ({best_option['confidence_score']:.0f}% conf)")
         
         return {
             'fixture_id': fixture_id,
@@ -282,24 +329,32 @@ class BettingAnalyzer:
             'away_team': away_team,
             'league': f"{league} ({country})",
             'match_time': match_time,
-            'selection': best_sel['name'],
-            'selection_type': best_sel['type'],
-            'odds': best_sel['odds'],
-            'probability': best_sel['prob'],
-            'avg_market_odds': best_sel['avg_odds'],
-            'odds_value': odds_value,
-            'expected_value': expected_value,
-            'confidence': confidence,
-            'advice': advice,
-            'odds_source': odds_source,
+            'selection': best_option['name'],
+            'selection_type': best_option['type'],
+            'odds': best_option['best_odds'],
+            'best_bookmaker': best_bookmaker,
             'has_10bet': has_10bet,
-            'all_odds': {'home': home_odds, 'draw': draw_odds, 'away': away_odds},
-            'tenbet_odds': {
-                'home': tenbet_home if has_10bet else 0.0,
-                'draw': tenbet_draw if has_10bet else 0.0,
-                'away': tenbet_away if has_10bet else 0.0
+            'ai_probability': best_option['ai_prob'],
+            'market_probability': best_option['market_prob'],
+            'confidence': best_option['confidence_score'],
+            'expected_value': best_option['expected_value'],
+            'advice': advice,
+            'winner_prediction': winner_name,
+            'all_odds': {
+                'home': best_home,
+                'draw': best_draw,
+                'away': best_away
             },
-            'all_probabilities': {'home': home_prob, 'draw': draw_prob, 'away': away_prob}
+            'all_ai_probs': {
+                'home': ai_home,
+                'draw': ai_draw,
+                'away': ai_away
+            },
+            'all_market_probs': {
+                'home': market_home,
+                'draw': market_draw,
+                'away': market_away
+            }
         }
 
 analyzer = None
@@ -307,7 +362,7 @@ analyzer = None
 def get_analyzer():
     global analyzer
     if analyzer is None:
-        analyzer = BettingAnalyzer(API_KEY)
+        analyzer = SmartBettingAnalyzer(API_KEY)
     return analyzer
 
 @app.route('/')
@@ -345,7 +400,7 @@ def get_predictions():
     
     try:
         print("\n" + "="*80)
-        print("FETCHING PREDICTIONS")
+        print("SMART PREDICTION ANALYSIS")
         print("="*80)
         
         fixtures = get_analyzer().get_todays_fixtures()
@@ -363,14 +418,14 @@ def get_predictions():
         opportunities = []
         
         for i, fixture in enumerate(fixtures, 1):
-            print(f"\n[{i}/{len(fixtures)}] {fixture['teams']['home']['name']} vs {fixture['teams']['away']['name']}")
+            print(f"\n[{i}/{len(fixtures)}]")
             
-            analysis = get_analyzer().analyze_fixture(fixture)
+            analysis = get_analyzer().analyze_fixture_smart(fixture)
             
             if analysis:
                 opportunities.append(analysis)
             
-            # Rate limiting
+            # Rate limiting - more requests now (predictions + odds)
             if i % 5 == 0:
                 import time
                 time.sleep(0.5)
@@ -378,14 +433,11 @@ def get_predictions():
         # Sort by confidence
         opportunities.sort(key=lambda x: x['confidence'], reverse=True)
         
-        tenbet_count = sum(1 for o in opportunities if o['has_10bet'])
-        
-        print(f"\n✅ Found {len(opportunities)} opportunities ({tenbet_count} with 10bet)")
+        print(f"\n✅ Found {len(opportunities)} HIGH-QUALITY opportunities")
         
         return jsonify({
             'success': True,
             'count': len(opportunities),
-            'tenbet_count': tenbet_count,
             'date': datetime.now().strftime('%Y-%m-%d'),
             'predictions': opportunities,
             'total_fixtures': len(fixtures)
@@ -405,85 +457,110 @@ def get_accumulators():
     try:
         stake = float(request.args.get('stake', 10.0))
         max_legs = int(request.args.get('max_legs', 3))
+        min_confidence = float(request.args.get('min_confidence', 75.0))  # Higher threshold!
+        
+        print(f"\nGenerating SMART accumulators (min confidence: {min_confidence}%)")
         
         fixtures = get_analyzer().get_todays_fixtures()
         opportunities = []
         
         for fixture in fixtures:
-            analysis = get_analyzer().analyze_fixture(fixture)
-            if analysis and analysis['confidence'] >= 60:
+            analysis = get_analyzer().analyze_fixture_smart(fixture)
+            if analysis and analysis['confidence'] >= min_confidence:
                 opportunities.append(analysis)
+        
+        print(f"Found {len(opportunities)} high-confidence bets for accumulators")
         
         if len(opportunities) < 2:
             return jsonify({
                 'success': True,
                 'count': 0,
                 'accumulators': [],
-                'message': 'Not enough high-confidence bets'
+                'message': f'Not enough {min_confidence}%+ confidence bets (need 2+, found {len(opportunities)})'
             })
         
         accumulators = []
         
+        # Only create 2-3 leg accumulators with HIGH confidence bets
         for num_legs in range(2, min(max_legs + 1, len(opportunities) + 1)):
             for combo in itertools.combinations(opportunities, num_legs):
                 combined_odds = 1.0
                 total_conf = 0.0
+                total_ev = 0.0
                 has_10bet_count = 0
                 
                 for opp in combo:
                     combined_odds *= opp['odds']
                     total_conf += opp['confidence']
+                    total_ev += opp['expected_value']
                     if opp['has_10bet']:
                         has_10bet_count += 1
                 
                 avg_conf = total_conf / num_legs
-                conf_score = (avg_conf / 100) ** num_legs * 100
+                avg_ev = total_ev / num_legs
+                
+                # More realistic confidence scoring for accumulators
+                realistic_conf = (avg_conf / 100) ** num_legs * 100
+                
                 potential_return = stake * combined_odds
                 
-                if avg_conf >= 75 and num_legs <= 2:
+                # Stricter risk levels
+                if avg_conf >= 85 and num_legs == 2 and combined_odds <= 4.0:
                     risk = 'LOW'
-                elif avg_conf >= 65 and num_legs <= 3:
+                elif avg_conf >= 80 and num_legs <= 2 and combined_odds <= 6.0:
+                    risk = 'MEDIUM'
+                elif avg_conf >= 75 and num_legs <= 3 and combined_odds <= 10.0:
                     risk = 'MEDIUM'
                 else:
                     risk = 'HIGH'
                 
-                accumulators.append({
-                    'legs': num_legs,
-                    'selections': [
-                        {
-                            'match': f"{o['home_team']} vs {o['away_team']}",
-                            'selection': o['selection'],
-                            'odds': o['odds'],
-                            'confidence': o['confidence'],
-                            'has_10bet': o['has_10bet'],
-                            'odds_source': o['odds_source']
-                        }
-                        for o in combo
-                    ],
-                    'combined_odds': round(combined_odds, 2),
-                    'average_confidence': round(avg_conf, 1),
-                    'confidence_score': round(conf_score, 1),
-                    'stake': stake,
-                    'potential_return': round(potential_return, 2),
-                    'potential_profit': round(potential_return - stake, 2),
-                    'risk_level': risk,
-                    'tenbet_legs': has_10bet_count
-                })
+                # Only include reasonable accumulators
+                if combined_odds <= 15.0 and avg_conf >= 75:  # Max 15x, min 75% avg
+                    accumulators.append({
+                        'legs': num_legs,
+                        'selections': [
+                            {
+                                'match': f"{o['home_team']} vs {o['away_team']}",
+                                'selection': o['selection'],
+                                'odds': o['odds'],
+                                'confidence': o['confidence'],
+                                'expected_value': o['expected_value'],
+                                'has_10bet': o['has_10bet'],
+                                'bookmaker': o['best_bookmaker']
+                            }
+                            for o in combo
+                        ],
+                        'combined_odds': round(combined_odds, 2),
+                        'average_confidence': round(avg_conf, 1),
+                        'realistic_confidence': round(realistic_conf, 1),
+                        'average_ev': round(avg_ev * 100, 1),
+                        'stake': stake,
+                        'potential_return': round(potential_return, 2),
+                        'potential_profit': round(potential_return - stake, 2),
+                        'risk_level': risk,
+                        'tenbet_legs': has_10bet_count
+                    })
         
-        accumulators.sort(key=lambda x: x['confidence_score'], reverse=True)
+        # Sort by realistic confidence (most likely to win)
+        accumulators.sort(key=lambda x: x['realistic_confidence'], reverse=True)
+        
+        print(f"Generated {len(accumulators)} quality accumulator options")
         
         return jsonify({
             'success': True,
             'count': len(accumulators),
-            'accumulators': accumulators[:20]
+            'accumulators': accumulators[:15]  # Top 15 most realistic
         })
     
     except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
-    print(f"\n🚀 Starting server on port {port}")
+    print(f"\n🧠 Starting SMART Betting Optimizer on port {port}")
     print(f"✅ API Key configured: {bool(API_KEY)}")
-    print(f"📊 Mode: All bookmakers (10bet highlighted)")
+    print(f"📊 Mode: Multi-factor analysis for REAL winners")
     app.run(host='0.0.0.0', port=port, debug=False)
