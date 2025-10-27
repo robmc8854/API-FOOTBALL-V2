@@ -125,34 +125,34 @@ class BettingAnalyzer:
         if not odds_data:
             return (0.0, 0.0, 0.0, 'Unknown')
         
-        best_home = 0.0
-        best_draw = 0.0
-        best_away = 0.0
-        bookmaker_name = 'Unknown'
-        
+        # Try to get any valid odds first
         for bookmaker_data in odds_data:
             bets = bookmaker_data.get('bets', [])
+            bookmaker_name = bookmaker_data.get('bookmaker', {}).get('name', 'Unknown')
             
             for bet in bets:
                 if bet.get('name') == 'Match Winner' or bet.get('id') == 1:
                     values = bet.get('values', [])
+                    home_odds = 0.0
+                    draw_odds = 0.0
+                    away_odds = 0.0
                     
                     for value in values:
                         odd_value = float(value.get('odd', 0))
                         value_name = value.get('value', '').lower()
                         
-                        if value_name == 'home' or value_name == '1':
-                            if odd_value > best_home:
-                                best_home = odd_value
-                                bookmaker_name = bookmaker_data.get('bookmaker', {}).get('name', 'Unknown')
-                        elif value_name == 'draw' or value_name == 'x':
-                            if odd_value > best_draw:
-                                best_draw = odd_value
-                        elif value_name == 'away' or value_name == '2':
-                            if odd_value > best_away:
-                                best_away = odd_value
+                        if value_name in ['home', '1']:
+                            home_odds = odd_value
+                        elif value_name in ['draw', 'x']:
+                            draw_odds = odd_value
+                        elif value_name in ['away', '2']:
+                            away_odds = odd_value
+                    
+                    # If we found any odds, return them (first bookmaker with data)
+                    if home_odds > 0 or draw_odds > 0 or away_odds > 0:
+                        return (home_odds, draw_odds, away_odds, bookmaker_name)
         
-        return (best_home, best_draw, best_away, bookmaker_name)
+        return (0.0, 0.0, 0.0, 'Unknown')
     
     def calculate_market_average(self, odds_data: List[Dict]) -> Tuple[float, float, float]:
         """Calculate average odds across all bookmakers"""
@@ -218,6 +218,11 @@ class BettingAnalyzer:
         odds_data = self.get_fixture_odds(fixture_id)
         
         if not odds_data:
+            print(f"    No odds data returned from API")
+            return None
+        
+        if len(odds_data) == 0:
+            print(f"    Odds data empty")
             return None
         
         # Check for 10bet odds
@@ -228,7 +233,10 @@ class BettingAnalyzer:
         
         # Skip if no odds at all
         if best_home == 0.0 and best_draw == 0.0 and best_away == 0.0:
+            print(f"    No valid 1X2 odds found")
             return None
+        
+        print(f"    Best odds: H:{best_home} D:{best_draw} A:{best_away} ({bookmaker_name})")
         
         # Use 10bet if available, otherwise use best odds
         if has_10bet:
@@ -415,11 +423,13 @@ def get_predictions():
             if analysis:
                 opportunities.append(analysis)
                 print(f"  ✅ Added - Odds from {analysis['odds_source']} (10bet: {analysis['has_10bet']})")
+            else:
+                print(f"  ❌ Skipped - No odds available")
             
             # Delay to avoid rate limiting
-            if i < len(fixtures) and i % 10 == 0:
+            if i < len(fixtures) and i % 5 == 0:
                 import time
-                time.sleep(1)
+                time.sleep(0.5)
         
         # Sort by confidence
         opportunities.sort(key=lambda x: x['confidence'], reverse=True)
