@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-10bet Betting Optimizer - Railway Web App
-Flask web interface for betting analysis and recommendations
+10bet Betting Optimizer - API-Football.com Version
+Flask web interface using API-Football from api-football.com
 """
 
 from flask import Flask, render_template, jsonify, request
@@ -11,213 +11,231 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import json
 import itertools
-from functools import lru_cache
 
 app = Flask(__name__)
 
-# Configuration
-API_TOKEN = os.environ.get('SPORTMONKS_API_TOKEN', '')
-TENBET_ID = 2  # 10bet bookmaker ID
-BASE_URL = "https://api.sportmonks.com/v3/football"
+# Configuration - API-Football uses RapidAPI
+API_KEY = os.environ.get('API_SPORTS_KEY', '')
+BASE_URL = "https://v3.football.api-sports.io"
 
 class BettingAnalyzer:
-    def __init__(self, api_token: str):
-        self.api_token = api_token
+    def __init__(self, api_key: str):
+        self.api_key = api_key
         self.base_url = BASE_URL
-        self.session = requests.Session()
-        self.session.params = {'api_token': api_token}
-        self.tenbet_id = TENBET_ID
+        self.headers = {
+            'x-rapidapi-key': api_key,
+            'x-rapidapi-host': 'v3.football.api-sports.io'
+        }
     
-    def make_request(self, url: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    def make_request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
         """Make API request with error handling"""
         try:
-            full_params = {'api_token': self.api_token}
-            if params:
-                full_params.update(params)
+            url = f"{self.base_url}/{endpoint}"
+            print(f"Making request to: {endpoint} with params: {params}")
             
-            response = self.session.get(url, params=full_params, timeout=30)
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
             response.raise_for_status()
-            return response.json()
+            
+            data = response.json()
+            print(f"Response received: {data.get('results', 0)} results")
+            
+            return data
         except Exception as e:
-            print(f"API Error: {e}")
+            print(f"API Error for {endpoint}: {e}")
             return None
     
     def get_todays_fixtures(self) -> List[Dict]:
         """Get all fixtures for today"""
         today = datetime.now().strftime('%Y-%m-%d')
-        url = f"{self.base_url}/fixtures/date/{today}"
-        params = {
-            'include': 'participants;league;venue;state'
-        }
         
-        data = self.make_request(url, params)
-        return data.get('data', []) if data else []
-    
-    def get_10bet_odds(self, fixture_id: int) -> Tuple[float, float, float]:
-        """Get 10bet 1X2 odds"""
-        url = f"{self.base_url}/odds/pre-match/fixtures/{fixture_id}"
-        params = {
-            'include': 'bookmaker;market',
-            'filters': f'bookmakers:{self.tenbet_id}'
-        }
+        print(f"Fetching fixtures for {today}...")
+        data = self.make_request('fixtures', params={'date': today})
         
-        data = self.make_request(url, params)
-        if not data or 'data' not in data:
-            return (0.0, 0.0, 0.0)
-        
-        for odd in data['data']:
-            market = odd.get('market', {})
-            if market.get('name') == '1X2' or market.get('id') == 1:
-                bookmaker = odd.get('bookmaker', {})
-                if bookmaker.get('id') == self.tenbet_id:
-                    odds = odd.get('odds', [])
-                    home_odds = 0.0
-                    draw_odds = 0.0
-                    away_odds = 0.0
-                    
-                    for selection in odds:
-                        label = selection.get('label', '').lower()
-                        value = float(selection.get('value', 0))
-                        
-                        if '1' in label or 'home' in label:
-                            home_odds = value
-                        elif 'x' in label or 'draw' in label:
-                            draw_odds = value
-                        elif '2' in label or 'away' in label:
-                            away_odds = value
-                    
-                    return (home_odds, draw_odds, away_odds)
-        
-        return (0.0, 0.0, 0.0)
-    
-    def get_all_bookmaker_odds(self, fixture_id: int) -> List[Dict]:
-        """Get odds from all bookmakers"""
-        url = f"{self.base_url}/odds/pre-match/fixtures/{fixture_id}"
-        params = {'include': 'bookmaker;market'}
-        
-        data = self.make_request(url, params)
-        if not data or 'data' not in data:
+        if not data or 'response' not in data:
+            print("No data received from API")
             return []
         
-        odds_list = []
-        seen_bookmakers = set()
+        fixtures = data['response']
+        print(f"Total fixtures found: {len(fixtures)}")
         
-        for odd in data['data']:
-            market = odd.get('market', {})
-            bookmaker = odd.get('bookmaker', {})
-            
-            if market.get('name') == '1X2' or market.get('id') == 1:
-                bookmaker_id = bookmaker.get('id')
-                bookmaker_name = bookmaker.get('name', 'Unknown')
-                
-                if bookmaker_id in seen_bookmakers:
-                    continue
-                seen_bookmakers.add(bookmaker_id)
-                
-                odds = odd.get('odds', [])
-                home_odds = 0.0
-                draw_odds = 0.0
-                away_odds = 0.0
-                
-                for selection in odds:
-                    label = selection.get('label', '').lower()
-                    value = float(selection.get('value', 0))
-                    
-                    if '1' in label or 'home' in label:
-                        home_odds = value
-                    elif 'x' in label or 'draw' in label:
-                        draw_odds = value
-                    elif '2' in label or 'away' in label:
-                        away_odds = value
-                
-                if home_odds > 0 or draw_odds > 0 or away_odds > 0:
-                    odds_list.append({
-                        'bookmaker': bookmaker_name,
-                        'home': home_odds,
-                        'draw': draw_odds,
-                        'away': away_odds
-                    })
+        # Filter for upcoming fixtures only
+        now = datetime.now()
+        upcoming = []
         
-        return odds_list
+        for fixture in fixtures:
+            try:
+                fixture_date = fixture['fixture']['date']
+                fixture_time = datetime.fromisoformat(fixture_date.replace('Z', '+00:00'))
+                status = fixture['fixture']['status']['long']
+                
+                # Only upcoming matches
+                if fixture_time > now and status in ['Not Started', 'Time to be defined', 'NS']:
+                    upcoming.append(fixture)
+            except Exception as e:
+                print(f"Error parsing fixture: {e}")
+                continue
+        
+        print(f"Upcoming fixtures: {len(upcoming)}")
+        return upcoming
     
-    def get_predictions(self, fixture_id: int) -> Tuple[float, float, float]:
-        """Get prediction probabilities"""
-        url = f"{self.base_url}/predictions/probabilities/fixtures/{fixture_id}"
-        data = self.make_request(url)
+    def get_fixture_odds(self, fixture_id: int) -> Optional[List[Dict]]:
+        """Get odds for specific fixture"""
+        print(f"  Fetching odds for fixture {fixture_id}...")
+        data = self.make_request('odds', params={'fixture': fixture_id})
         
-        if not data or 'data' not in data:
+        if not data or 'response' not in data:
+            print(f"  No odds data received")
+            return None
+        
+        odds_response = data['response']
+        print(f"  Found odds from {len(odds_response)} bookmakers")
+        
+        return odds_response
+    
+    def get_fixture_predictions(self, fixture_id: int) -> Optional[Dict]:
+        """Get predictions for specific fixture"""
+        print(f"  Fetching predictions for fixture {fixture_id}...")
+        data = self.make_request('predictions', params={'fixture': fixture_id})
+        
+        if not data or 'response' not in data or len(data['response']) == 0:
+            print(f"  No predictions available")
+            return None
+        
+        print(f"  Predictions received")
+        return data['response'][0]
+    
+    def find_10bet_odds(self, odds_data: List[Dict]) -> Tuple[float, float, float]:
+        """Extract 10bet odds from odds data"""
+        if not odds_data:
+            return (0.0, 0.0, 0.0)
+        
+        for bookmaker_data in odds_data:
+            bookmaker_name = bookmaker_data.get('bookmaker', {}).get('name', '').lower()
+            bookmaker_id = bookmaker_data.get('bookmaker', {}).get('id', 0)
+            
+            # Look for 10bet (ID is usually 24, but check name too)
+            if '10bet' in bookmaker_name or '10 bet' in bookmaker_name or bookmaker_id == 24:
+                print(f"  Found 10bet: {bookmaker_data.get('bookmaker', {}).get('name')}")
+                
+                bets = bookmaker_data.get('bets', [])
+                
+                for bet in bets:
+                    bet_name = bet.get('name', '')
+                    # Find Match Winner (1X2) market
+                    if bet_name == 'Match Winner' or bet.get('id') == 1:
+                        values = bet.get('values', [])
+                        home_odds = 0.0
+                        draw_odds = 0.0
+                        away_odds = 0.0
+                        
+                        for value in values:
+                            odd_value = float(value.get('odd', 0))
+                            value_name = value.get('value', '').lower()
+                            
+                            if value_name == 'home' or value_name == '1':
+                                home_odds = odd_value
+                            elif value_name == 'draw' or value_name == 'x':
+                                draw_odds = odd_value
+                            elif value_name == 'away' or value_name == '2':
+                                away_odds = odd_value
+                        
+                        print(f"  10bet odds: Home={home_odds}, Draw={draw_odds}, Away={away_odds}")
+                        
+                        if home_odds > 0 or draw_odds > 0 or away_odds > 0:
+                            return (home_odds, draw_odds, away_odds)
+        
+        print(f"  No 10bet odds found")
+        return (0.0, 0.0, 0.0)
+    
+    def calculate_market_average(self, odds_data: List[Dict]) -> Tuple[float, float, float]:
+        """Calculate average odds across all bookmakers"""
+        if not odds_data:
+            return (0.0, 0.0, 0.0)
+        
+        home_odds_list = []
+        draw_odds_list = []
+        away_odds_list = []
+        
+        for bookmaker_data in odds_data:
+            bets = bookmaker_data.get('bets', [])
+            
+            for bet in bets:
+                if bet.get('name') == 'Match Winner' or bet.get('id') == 1:
+                    values = bet.get('values', [])
+                    
+                    for value in values:
+                        odd_value = float(value.get('odd', 0))
+                        value_name = value.get('value', '').lower()
+                        
+                        if odd_value > 0:
+                            if value_name == 'home' or value_name == '1':
+                                home_odds_list.append(odd_value)
+                            elif value_name == 'draw' or value_name == 'x':
+                                draw_odds_list.append(odd_value)
+                            elif value_name == 'away' or value_name == '2':
+                                away_odds_list.append(odd_value)
+        
+        avg_home = sum(home_odds_list) / len(home_odds_list) if home_odds_list else 0.0
+        avg_draw = sum(draw_odds_list) / len(draw_odds_list) if draw_odds_list else 0.0
+        avg_away = sum(away_odds_list) / len(away_odds_list) if away_odds_list else 0.0
+        
+        print(f"  Market avg: Home={avg_home:.2f}, Draw={avg_draw:.2f}, Away={avg_away:.2f}")
+        
+        return (avg_home, avg_draw, avg_away)
+    
+    def get_prediction_probabilities(self, prediction_data: Optional[Dict]) -> Tuple[float, float, float]:
+        """Extract prediction probabilities"""
+        if not prediction_data:
             return (0.0, 0.0, 0.0)
         
         try:
-            predictions = data['data'].get('predictions', [])
-            for pred in predictions:
-                if pred.get('type', {}).get('name') == '1X2':
-                    home_prob = float(pred.get('home', 0))
-                    draw_prob = float(pred.get('draw', 0))
-                    away_prob = float(pred.get('away', 0))
-                    return (home_prob, draw_prob, away_prob)
-        except:
-            pass
-        
-        return (0.0, 0.0, 0.0)
-    
-    def get_value_bets(self, fixture_id: int) -> float:
-        """Get value bet score"""
-        url = f"{self.base_url}/predictions/valuebets/fixtures/{fixture_id}"
-        data = self.make_request(url)
-        
-        if not data or 'data' not in data:
-            return 0.0
-        
-        try:
-            value_bets = data['data'].get('predictions', [])
-            for vb in value_bets:
-                if vb.get('type', {}).get('name') == '1X2':
-                    return float(vb.get('value', 0))
-        except:
-            pass
-        
-        return 0.0
-    
-    def calculate_market_average(self, all_odds: List[Dict], selection: str) -> float:
-        """Calculate average odds across bookmakers"""
-        valid_odds = [odd[selection] for odd in all_odds if odd[selection] > 0]
-        return sum(valid_odds) / len(valid_odds) if valid_odds else 0.0
+            predictions = prediction_data.get('predictions', {})
+            percent = predictions.get('percent', {})
+            
+            home_prob = float(str(percent.get('home', '0')).replace('%', ''))
+            draw_prob = float(str(percent.get('draw', '0')).replace('%', ''))
+            away_prob = float(str(percent.get('away', '0')).replace('%', ''))
+            
+            print(f"  Predictions: Home={home_prob}%, Draw={draw_prob}%, Away={away_prob}%")
+            
+            return (home_prob, draw_prob, away_prob)
+        except Exception as e:
+            print(f"  Error parsing predictions: {e}")
+            return (0.0, 0.0, 0.0)
     
     def analyze_fixture(self, fixture: Dict) -> Optional[Dict]:
         """Analyze a single fixture"""
-        fixture_id = fixture.get('id')
-        participants = fixture.get('participants', [])
+        fixture_id = fixture['fixture']['id']
+        home_team = fixture['teams']['home']['name']
+        away_team = fixture['teams']['away']['name']
+        league = fixture['league']['name']
+        country = fixture['league']['country']
+        match_time = fixture['fixture']['date']
         
-        if len(participants) < 2:
+        print(f"\n🔍 Analyzing: {home_team} vs {away_team}")
+        
+        # Get odds
+        odds_data = self.get_fixture_odds(fixture_id)
+        
+        if not odds_data:
+            print(f"  ❌ No odds data available")
             return None
-        
-        home_team = participants[0].get('name', 'Unknown')
-        away_team = participants[1].get('name', 'Unknown')
-        league = fixture.get('league', {}).get('name', 'Unknown')
-        match_time = fixture.get('starting_at', 'Unknown')
         
         # Get 10bet odds
-        home_odds, draw_odds, away_odds = self.get_10bet_odds(fixture_id)
+        home_odds, draw_odds, away_odds = self.find_10bet_odds(odds_data)
         
         if home_odds == 0.0 and draw_odds == 0.0 and away_odds == 0.0:
-            return None
+            print(f"  ❌ No 10bet odds available")
+            return None  # No 10bet odds available
+        
+        # Get market averages
+        avg_home, avg_draw, avg_away = self.calculate_market_average(odds_data)
         
         # Get predictions
-        home_prob, draw_prob, away_prob = self.get_predictions(fixture_id)
+        prediction_data = self.get_fixture_predictions(fixture_id)
+        home_prob, draw_prob, away_prob = self.get_prediction_probabilities(prediction_data)
         
-        # Get all bookmaker odds for comparison
-        all_odds = self.get_all_bookmaker_odds(fixture_id)
-        
-        # Calculate market averages
-        avg_home = self.calculate_market_average(all_odds, 'home')
-        avg_draw = self.calculate_market_average(all_odds, 'draw')
-        avg_away = self.calculate_market_average(all_odds, 'away')
-        
-        # Get value bet score
-        value_score = self.get_value_bets(fixture_id)
-        
-        # Determine best selection
+        # Determine best selection based on probabilities
         selections = [
             {
                 'type': 'home',
@@ -245,6 +263,7 @@ class BettingAnalyzer:
         best_sel = max(selections, key=lambda x: x['prob'])
         
         if best_sel['odds'] == 0:
+            print(f"  ❌ Best selection has no odds")
             return None
         
         # Calculate metrics
@@ -255,16 +274,27 @@ class BettingAnalyzer:
         # Boost confidence for value bets
         if odds_value > 5:
             confidence += 10
+            print(f"  💎 Value bet bonus: +10% confidence")
         if expected_value > 0.1:
             confidence += 10
+            print(f"  💚 Positive EV bonus: +10% confidence")
         
         confidence = min(100, confidence)
+        
+        # Get advice from predictions
+        advice = "No advice available"
+        if prediction_data:
+            advice = prediction_data.get('predictions', {}).get('advice', 'No advice available')
+        
+        print(f"  ✅ Recommendation: {best_sel['name']} @ {best_sel['odds']:.2f}")
+        print(f"  📊 Confidence: {confidence:.1f}%")
+        print(f"  💰 Expected Value: {expected_value:+.2%}")
         
         return {
             'fixture_id': fixture_id,
             'home_team': home_team,
             'away_team': away_team,
-            'league': league,
+            'league': f"{league} ({country})",
             'match_time': match_time,
             'selection': best_sel['name'],
             'selection_type': best_sel['type'],
@@ -274,7 +304,7 @@ class BettingAnalyzer:
             'odds_value': odds_value,
             'expected_value': expected_value,
             'confidence': confidence,
-            'value_score': value_score,
+            'advice': advice,
             'all_odds': {
                 'home': home_odds,
                 'draw': draw_odds,
@@ -284,12 +314,17 @@ class BettingAnalyzer:
                 'home': home_prob,
                 'draw': draw_prob,
                 'away': away_prob
-            },
-            'bookmaker_comparison': all_odds[:5]  # Top 5 bookmakers
+            }
         }
 
 # Initialize analyzer
-analyzer = BettingAnalyzer(API_TOKEN)
+analyzer = None
+
+def get_analyzer():
+    global analyzer
+    if analyzer is None:
+        analyzer = BettingAnalyzer(API_KEY)
+    return analyzer
 
 @app.route('/')
 def index():
@@ -299,38 +334,92 @@ def index():
 @app.route('/api/status')
 def api_status():
     """Check API status"""
-    if not API_TOKEN:
+    if not API_KEY:
         return jsonify({
             'success': False,
-            'error': 'API token not configured'
+            'error': 'API key not configured. Add API_SPORTS_KEY environment variable in Railway.'
         }), 400
     
-    return jsonify({
-        'success': True,
-        'api_configured': True,
-        'tenbet_id': TENBET_ID
-    })
+    try:
+        # Test API connection
+        print("Testing API connection...")
+        test_data = get_analyzer().make_request('status')
+        
+        if test_data and 'response' in test_data:
+            account = test_data['response']
+            
+            return jsonify({
+                'success': True,
+                'api_configured': True,
+                'account': {
+                    'requests_limit': account.get('requests', {}).get('limit_day', 0),
+                    'requests_current': account.get('requests', {}).get('current', 0),
+                    'subscription': account.get('subscription', {}).get('plan', 'Unknown')
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Unable to connect to API-Football'
+            }), 500
+            
+    except Exception as e:
+        print(f"Status check error: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'API connection error: {str(e)}'
+        }), 500
 
 @app.route('/api/predictions')
 def get_predictions():
     """Get all predictions with 10bet odds"""
-    if not API_TOKEN:
+    if not API_KEY:
         return jsonify({
             'success': False,
-            'error': 'API token not configured'
+            'error': 'API key not configured. Add API_SPORTS_KEY environment variable in Railway.'
         }), 400
     
     try:
-        fixtures = analyzer.get_todays_fixtures()
+        print("\n" + "="*80)
+        print("STARTING PREDICTIONS FETCH")
+        print("="*80)
+        
+        fixtures = get_analyzer().get_todays_fixtures()
+        
+        if not fixtures:
+            print("No upcoming fixtures found for today")
+            return jsonify({
+                'success': True,
+                'count': 0,
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'predictions': [],
+                'total_fixtures': 0,
+                'message': 'No upcoming fixtures for today'
+            })
+        
+        print(f"\n📋 Processing {len(fixtures)} fixtures...")
+        
         opportunities = []
         
-        for fixture in fixtures:
-            analysis = analyzer.analyze_fixture(fixture)
+        for i, fixture in enumerate(fixtures, 1):
+            print(f"\n--- Fixture {i}/{len(fixtures)} ---")
+            
+            analysis = get_analyzer().analyze_fixture(fixture)
+            
             if analysis:
                 opportunities.append(analysis)
+            
+            # Small delay to avoid rate limiting
+            if i < len(fixtures):
+                import time
+                time.sleep(0.5)
         
         # Sort by confidence
         opportunities.sort(key=lambda x: x['confidence'], reverse=True)
+        
+        print("\n" + "="*80)
+        print(f"RESULTS: Found {len(opportunities)} opportunities with 10bet odds")
+        print("="*80)
         
         return jsonify({
             'success': True,
@@ -341,6 +430,10 @@ def get_predictions():
         })
     
     except Exception as e:
+        print(f"\n❌ ERROR in get_predictions: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
         return jsonify({
             'success': False,
             'error': str(e)
@@ -349,23 +442,35 @@ def get_predictions():
 @app.route('/api/accumulators')
 def get_accumulators():
     """Generate accumulator bets"""
-    if not API_TOKEN:
+    if not API_KEY:
         return jsonify({
             'success': False,
-            'error': 'API token not configured'
+            'error': 'API key not configured'
         }), 400
     
     try:
         stake = float(request.args.get('stake', 10.0))
         max_legs = int(request.args.get('max_legs', 3))
         
-        fixtures = analyzer.get_todays_fixtures()
+        print(f"Generating accumulators with stake={stake}, max_legs={max_legs}")
+        
+        fixtures = get_analyzer().get_todays_fixtures()
         opportunities = []
         
         for fixture in fixtures:
-            analysis = analyzer.analyze_fixture(fixture)
+            analysis = get_analyzer().analyze_fixture(fixture)
             if analysis and analysis['confidence'] >= 60:
                 opportunities.append(analysis)
+        
+        print(f"Found {len(opportunities)} high-confidence opportunities")
+        
+        if len(opportunities) < 2:
+            return jsonify({
+                'success': True,
+                'count': 0,
+                'accumulators': [],
+                'message': 'Not enough high-confidence bets for accumulators'
+            })
         
         # Create accumulators
         accumulators = []
@@ -414,6 +519,8 @@ def get_accumulators():
         # Sort by confidence score
         accumulators.sort(key=lambda x: x['confidence_score'], reverse=True)
         
+        print(f"Generated {len(accumulators)} accumulator combinations")
+        
         return jsonify({
             'success': True,
             'count': len(accumulators),
@@ -421,29 +528,10 @@ def get_accumulators():
         })
     
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/fixture/<int:fixture_id>')
-def get_fixture_detail(fixture_id):
-    """Get detailed analysis for specific fixture"""
-    if not API_TOKEN:
-        return jsonify({
-            'success': False,
-            'error': 'API token not configured'
-        }), 400
-    
-    try:
-        # This would need to fetch and analyze specific fixture
-        return jsonify({
-            'success': True,
-            'fixture_id': fixture_id,
-            'message': 'Detailed analysis endpoint'
-        })
-    
-    except Exception as e:
+        print(f"Error in accumulators: {e}")
+        import traceback
+        traceback.print_exc()
+        
         return jsonify({
             'success': False,
             'error': str(e)
@@ -451,4 +539,6 @@ def get_fixture_detail(fixture_id):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
+    print(f"Starting server on port {port}")
+    print(f"API Key configured: {bool(API_KEY)}")
     app.run(host='0.0.0.0', port=port, debug=False)
