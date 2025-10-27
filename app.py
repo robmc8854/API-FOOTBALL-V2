@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-10bet Betting Optimizer - API-Football.com Version
+10bet Betting Optimizer - API-Football.com Version (FIXED)
 Flask web interface using API-Football from api-football.com
 """
 
 from flask import Flask, render_template, jsonify, request
 import requests
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 import json
 import itertools
@@ -58,13 +58,14 @@ class BettingAnalyzer:
         fixtures = data['response']
         print(f"Total fixtures found: {len(fixtures)}")
         
-        # Filter for upcoming fixtures only
-        now = datetime.now()
+        # Filter for upcoming fixtures only - FIX: use timezone-aware datetime
+        now = datetime.now(timezone.utc)  # Make current time timezone-aware
         upcoming = []
         
         for fixture in fixtures:
             try:
                 fixture_date = fixture['fixture']['date']
+                # Parse ISO format with timezone
                 fixture_time = datetime.fromisoformat(fixture_date.replace('Z', '+00:00'))
                 status = fixture['fixture']['status']['long']
                 
@@ -115,7 +116,7 @@ class BettingAnalyzer:
             
             # Look for 10bet (ID is usually 24, but check name too)
             if '10bet' in bookmaker_name or '10 bet' in bookmaker_name or bookmaker_id == 24:
-                print(f"  Found 10bet: {bookmaker_data.get('bookmaker', {}).get('name')}")
+                print(f"  ✅ Found 10bet: {bookmaker_data.get('bookmaker', {}).get('name')}")
                 
                 bets = bookmaker_data.get('bets', [])
                 
@@ -144,7 +145,7 @@ class BettingAnalyzer:
                         if home_odds > 0 or draw_odds > 0 or away_odds > 0:
                             return (home_odds, draw_odds, away_odds)
         
-        print(f"  No 10bet odds found")
+        print(f"  ❌ No 10bet odds found")
         return (0.0, 0.0, 0.0)
     
     def calculate_market_average(self, odds_data: List[Dict]) -> Tuple[float, float, float]:
@@ -539,6 +540,6 @@ def get_accumulators():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
-    print(f"Starting server on port {port}")
-    print(f"API Key configured: {bool(API_KEY)}")
+    print(f"\n🚀 Starting server on port {port}")
+    print(f"✅ API Key configured: {bool(API_KEY)}")
     app.run(host='0.0.0.0', port=port, debug=False)
