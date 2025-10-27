@@ -527,6 +527,7 @@
                                 <div class="match-info">
                                     <h3>${bet.home_team} vs ${bet.away_team}</h3>
                                     <div class="league-info">${bet.league} • ${formatDateTime(bet.match_time)}</div>
+                                    ${bet.has_10bet ? '<div style="display:inline-block;background:#10b981;color:white;padding:4px 10px;border-radius:5px;font-size:0.8em;margin-top:5px;">✅ 10bet Available</div>' : '<div style="display:inline-block;background:#6b7280;color:white;padding:4px 10px;border-radius:5px;font-size:0.8em;margin-top:5px;">Using: ' + bet.odds_source + '</div>'}
                                 </div>
                                 <div class="confidence-badge ${confidenceClass}">
                                     ${bet.confidence.toFixed(1)}% Confidence
@@ -621,7 +622,8 @@
                                 <div class="acca-selection">
                                     <div class="acca-selection-info">
                                         <strong>Leg ${i + 1}: ${sel.match}</strong><br>
-                                        <small>Pick: ${sel.selection} (${sel.confidence.toFixed(1)}% confidence)</small>
+                                        <small>Pick: ${sel.selection} (${sel.confidence.toFixed(1)}% confidence)</small><br>
+                                        <small style="color:#666;">${sel.has_10bet ? '✅ 10bet' : '📊 ' + sel.odds_source}</small>
                                     </div>
                                     <div class="acca-selection-odds">${sel.odds.toFixed(2)}</div>
                                 </div>
