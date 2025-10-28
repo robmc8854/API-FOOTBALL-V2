@@ -410,7 +410,6 @@
             <button class="tab-button active" onclick="showTab('singles')">💎 Single Bets</button>
             <button class="tab-button" onclick="showTab('accumulators')">🚀 Accumulators</button>
             <button class="tab-button" onclick="showTab('stats')">📊 Statistics</button>
-            <button class="tab-button" onclick="showTab('diagnostics')" style="background:#6366f1;color:white;">🔍 Diagnostics</button>
         </div>
 
         <div id="singles" class="content-section active">
@@ -431,14 +430,6 @@
 
         <div id="stats" class="content-section">
             <div id="stats-content"></div>
-        </div>
-
-        <div id="diagnostics" class="content-section">
-            <div id="diagnostics-loading" class="loading">
-                <div class="loading-spinner"></div>
-                <p>Running diagnostics on today's fixtures...</p>
-            </div>
-            <div id="diagnostics-content"></div>
         </div>
     </div>
 
@@ -469,8 +460,6 @@
                 loadAccumulators();
             } else if (tabName === 'stats' && predictionsData) {
                 displayStats();
-            } else if (tabName === 'diagnostics') {
-                loadDiagnostics();
             }
         }
 
@@ -553,12 +542,16 @@
 
                             <div class="bet-details">
                                 <div class="detail-item">
-                                    <div class="detail-label">AI Prediction</div>
+                                    <div class="detail-label">AI Probability</div>
                                     <div class="detail-value highlight">${bet.ai_probability.toFixed(1)}%</div>
                                 </div>
                                 <div class="detail-item">
-                                    <div class="detail-label">Market Consensus</div>
-                                    <div class="detail-value">${bet.market_probability.toFixed(1)}%</div>
+                                    <div class="detail-label">API Recommends</div>
+                                    <div class="detail-value highlight">${bet.api_recommendation}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Market Agrees</div>
+                                    <div class="detail-value positive">${bet.market_agrees ? '✅ YES' : '❌ NO'}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Best Odds</div>
@@ -569,6 +562,10 @@
                                     <div class="detail-value ${bet.expected_value > 0 ? 'positive' : 'negative'}">
                                         ${bet.expected_value > 0 ? '+' : ''}${(bet.expected_value * 100).toFixed(1)}%
                                     </div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Bookmaker</div>
+                                    <div class="detail-value">${bet.best_bookmaker}${bet.has_10bet ? ' <span style="color:#10b981;">✅</span>' : ''}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">£10 Returns</div>
@@ -740,142 +737,6 @@
             `;
 
             contentEl.innerHTML = html;
-        }
-
-        async function loadDiagnostics() {
-            const loadingEl = document.getElementById('diagnostics-loading');
-            const contentEl = document.getElementById('diagnostics-content');
-            
-            loadingEl.style.display = 'block';
-            contentEl.style.display = 'none';
-            
-            try {
-                const response = await fetch('/api/diagnostics');
-                const data = await response.json();
-                
-                loadingEl.style.display = 'none';
-                contentEl.style.display = 'block';
-                
-                if (!data.success) {
-                    contentEl.innerHTML = `<div class="error">Error: ${data.error}</div>`;
-                    return;
-                }
-                
-                let html = `
-                    <div style="background:white;border-radius:15px;padding:30px;box-shadow:0 10px 30px rgba(0,0,0,0.2);">
-                        <h2 style="color:#667eea;margin-bottom:20px;">🔍 Quality Filter Diagnostics</h2>
-                        <div style="background:#f8f9fa;padding:20px;border-radius:10px;margin-bottom:20px;">
-                            <p style="font-size:1.2em;margin-bottom:10px;">
-                                <strong>Total Analyzed:</strong> ${data.total_analyzed} fixtures
-                            </p>
-                            <p style="font-size:1.2em;">
-                                <strong>Passed Quality Filter (65%+):</strong> 
-                                <span style="color:#10b981;font-weight:bold;">${data.quality_bets} bets</span>
-                            </p>
-                        </div>
-                        
-                        <h3 style="margin:20px 0;">Match-by-Match Breakdown:</h3>
-                `;
-                
-                data.results.forEach((result, i) => {
-                    const statusColor = result.passes_filter ? '#10b981' : '#ef4444';
-                    const statusIcon = result.passes_filter ? '✅' : '❌';
-                    
-                    html += `
-                        <div style="background:#f8f9fa;padding:20px;border-radius:10px;margin-bottom:15px;border-left:4px solid ${statusColor};">
-                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                                <h4 style="color:#333;font-size:1.1em;">${statusIcon} ${result.match}</h4>
-                                <span style="background:${statusColor};color:white;padding:5px 15px;border-radius:5px;font-weight:bold;">
-                                    ${result.filter_reason}
-                                </span>
-                            </div>
-                    `;
-                    
-                    if (result.status === 'NO_PREDICTIONS') {
-                        html += `<p style="color:#666;">⚠️ ${result.reason}</p>`;
-                    } else if (result.status === 'NO_ODDS') {
-                        html += `<p style="color:#666;">⚠️ ${result.reason}</p>`;
-                    } else {
-                        html += `
-                            <div style="margin-bottom:15px;">
-                                <p style="color:#666;margin-bottom:10px;">
-                                    <strong>Best Pick:</strong> ${result.best_pick} 
-                                    (${result.best_confidence}% confidence)
-                                    ${result.has_10bet ? '<span style="background:#10b981;color:white;padding:2px 8px;border-radius:3px;margin-left:10px;">✅ 10bet</span>' : ''}
-                                </p>
-                            </div>
-                            
-                            <table style="width:100%;border-collapse:collapse;">
-                                <thead>
-                                    <tr style="background:#e5e7eb;">
-                                        <th style="padding:10px;text-align:left;">Option</th>
-                                        <th style="padding:10px;text-align:center;">AI %</th>
-                                        <th style="padding:10px;text-align:center;">Market %</th>
-                                        <th style="padding:10px;text-align:center;">Odds</th>
-                                        <th style="padding:10px;text-align:center;">Base</th>
-                                        <th style="padding:10px;text-align:center;">Agree</th>
-                                        <th style="padding:10px;text-align:center;">Value</th>
-                                        <th style="padding:10px;text-align:center;">EV</th>
-                                        <th style="padding:10px;text-align:center;">Odds</th>
-                                        <th style="padding:10px;text-align:center;"><strong>Final</strong></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                        `;
-                        
-                        result.options.forEach(opt => {
-                            const isWinner = opt.option === result.best_pick;
-                            const rowStyle = isWinner ? 'background:#d1fae5;font-weight:bold;' : '';
-                            
-                            html += `
-                                <tr style="${rowStyle}">
-                                    <td style="padding:10px;">${opt.option}</td>
-                                    <td style="padding:10px;text-align:center;">${opt.ai_prob}%</td>
-                                    <td style="padding:10px;text-align:center;">${opt.market_prob}%</td>
-                                    <td style="padding:10px;text-align:center;">${opt.odds}</td>
-                                    <td style="padding:10px;text-align:center;">${opt.base_score}</td>
-                                    <td style="padding:10px;text-align:center;color:${opt.agreement_bonus > 0 ? '#10b981' : '#ef4444'};">${opt.agreement_bonus > 0 ? '+' : ''}${opt.agreement_bonus}</td>
-                                    <td style="padding:10px;text-align:center;color:${opt.value_bonus > 0 ? '#10b981' : '#666'};">${opt.value_bonus > 0 ? '+' : ''}${opt.value_bonus.toFixed(1)}</td>
-                                    <td style="padding:10px;text-align:center;color:${opt.ev_bonus > 0 ? '#10b981' : '#ef4444'};">${opt.ev_bonus > 0 ? '+' : ''}${opt.ev_bonus}</td>
-                                    <td style="padding:10px;text-align:center;color:${opt.odds_bonus > 0 ? '#10b981' : opt.odds_bonus < 0 ? '#ef4444' : '#666'};">${opt.odds_bonus > 0 ? '+' : ''}${opt.odds_bonus}</td>
-                                    <td style="padding:10px;text-align:center;"><strong>${opt.final_confidence}%</strong></td>
-                                </tr>
-                            `;
-                        });
-                        
-                        html += `
-                                </tbody>
-                            </table>
-                        `;
-                    }
-                    
-                    html += `</div>`;
-                });
-                
-                html += `
-                        <div style="background:#f0f9ff;padding:20px;border-radius:10px;margin-top:20px;">
-                            <h4 style="color:#0369a1;margin-bottom:10px;">💡 Understanding the Scores</h4>
-                            <ul style="color:#666;line-height:1.8;">
-                                <li><strong>AI %:</strong> What AI predicts</li>
-                                <li><strong>Market %:</strong> What bookmakers think (from odds)</li>
-                                <li><strong>Base:</strong> Starting score from AI</li>
-                                <li><strong>Agree:</strong> Bonus when AI and market agree (+15 to -5)</li>
-                                <li><strong>Value:</strong> Bonus when AI > Market</li>
-                                <li><strong>EV:</strong> Expected Value bonus (+15 to -10)</li>
-                                <li><strong>Odds:</strong> Favorite bonus or long-shot penalty</li>
-                                <li><strong>Final:</strong> Total confidence (must be 65%+ to show)</li>
-                            </ul>
-                        </div>
-                    </div>
-                `;
-                
-                contentEl.innerHTML = html;
-                
-            } catch (error) {
-                loadingEl.style.display = 'none';
-                contentEl.style.display = 'block';
-                contentEl.innerHTML = `<div class="error">Error loading diagnostics: ${error.message}</div>`;
-            }
         }
 
         // Load predictions on page load
