@@ -325,6 +325,28 @@ class AdvancedBettingAnalyzer:
         else:
             return 'draw'
     
+    def safe_extract_goals_avg(self, pred_data: Dict, team: str = 'home') -> float:
+        """Safely extract team's average goals from predictions data"""
+        try:
+            goals_data = pred_data.get('goals', {})
+            if not isinstance(goals_data, dict):
+                return 0.0
+            
+            team_data = goals_data.get(team, {})
+            if not isinstance(team_data, dict):
+                return 0.0
+            
+            avg_data = team_data.get('average', {})
+            if not isinstance(avg_data, dict):
+                return 0.0
+            
+            total = avg_data.get('total', 0)
+            if isinstance(total, str):
+                return float(total) if total else 0.0
+            return float(total)
+        except:
+            return 0.0
+    
     def analyze_all_markets(self, fixture: Dict) -> Optional[Dict]:
         """Analyze ALL available markets for a fixture"""
         fixture_id = fixture['fixture']['id']
@@ -445,10 +467,9 @@ class AdvancedBettingAnalyzer:
         # 2. BTTS ANALYSIS
         btts_odds = self.extract_btts_odds(odds_response)
         if btts_odds:
-            # Get goals data
-            goals_data = pred_data.get('goals', {})
-            home_avg = float(goals_data.get('home', {}).get('average', {}).get('total', 0))
-            away_avg = float(goals_data.get('away', {}).get('average', {}).get('total', 0))
+            # Get goals data using safe extraction
+            home_avg = self.safe_extract_goals_avg(pred_data, 'home')
+            away_avg = self.safe_extract_goals_avg(pred_data, 'away')
             
             # BTTS Yes
             if home_avg > 1.0 and away_avg > 1.0:
@@ -497,9 +518,9 @@ class AdvancedBettingAnalyzer:
         # 3. OVER/UNDER ANALYSIS
         ou_odds = self.extract_over_under_odds(odds_response)
         if ou_odds:
-            goals_data = pred_data.get('goals', {})
-            home_avg = float(goals_data.get('home', {}).get('average', {}).get('total', 0))
-            away_avg = float(goals_data.get('away', {}).get('average', {}).get('total', 0))
+            # Get goals data using safe extraction
+            home_avg = self.safe_extract_goals_avg(pred_data, 'home')
+            away_avg = self.safe_extract_goals_avg(pred_data, 'away')
             total_avg = home_avg + away_avg
             
             for line, odds_data in ou_odds.items():
