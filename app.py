@@ -316,9 +316,14 @@ class SmartBettingAnalyzer:
         # Pick best option by confidence score
         best_option = max(options, key=lambda x: x['confidence_score'])
         
-        # Only recommend if confidence >= 65%
-        if best_option['confidence_score'] < 65:
-            print(f"      ⚠️  Low confidence: {best_option['confidence_score']:.0f}% - Skipped")
+        # Debug: Show all options and scoring
+        print(f"      🔍 Scoring breakdown:")
+        for opt in options:
+            print(f"         {opt['name']}: AI={opt['ai_prob']:.1f}% Market={opt['market_prob']:.1f}% Odds={opt['best_odds']:.2f} → Conf={opt['confidence_score']:.1f}%")
+        
+        # Only recommend if confidence >= 60% (lowered threshold)
+        if best_option['confidence_score'] < 60:
+            print(f"      ⚠️  Best option too low: {best_option['name']} {best_option['confidence_score']:.0f}% - Skipped")
             return None
         
         print(f"      ✅ {best_option['name']} @ {best_option['best_odds']:.2f} ({best_option['confidence_score']:.0f}% conf)")
@@ -416,6 +421,7 @@ def get_predictions():
             })
         
         opportunities = []
+        skipped = {'no_predictions': 0, 'no_odds': 0, 'low_confidence': 0}
         
         for i, fixture in enumerate(fixtures, 1):
             print(f"\n[{i}/{len(fixtures)}]")
@@ -433,7 +439,12 @@ def get_predictions():
         # Sort by confidence
         opportunities.sort(key=lambda x: x['confidence'], reverse=True)
         
-        print(f"\n✅ Found {len(opportunities)} HIGH-QUALITY opportunities")
+        tenbet_count = sum(1 for o in opportunities if o['has_10bet'])
+        
+        print(f"\n{'='*80}")
+        print(f"✅ Found {len(opportunities)} opportunities (out of {len(fixtures)} fixtures)")
+        print(f"📊 10bet available: {tenbet_count}")
+        print(f"{'='*80}")
         
         return jsonify({
             'success': True,
@@ -457,7 +468,7 @@ def get_accumulators():
     try:
         stake = float(request.args.get('stake', 10.0))
         max_legs = int(request.args.get('max_legs', 3))
-        min_confidence = float(request.args.get('min_confidence', 75.0))  # Higher threshold!
+        min_confidence = float(request.args.get('min_confidence', 70.0))  # Lowered to 70%
         
         print(f"\nGenerating SMART accumulators (min confidence: {min_confidence}%)")
         
@@ -505,17 +516,17 @@ def get_accumulators():
                 potential_return = stake * combined_odds
                 
                 # Stricter risk levels
-                if avg_conf >= 85 and num_legs == 2 and combined_odds <= 4.0:
+                if avg_conf >= 80 and num_legs == 2 and combined_odds <= 4.0:
                     risk = 'LOW'
-                elif avg_conf >= 80 and num_legs <= 2 and combined_odds <= 6.0:
+                elif avg_conf >= 75 and num_legs <= 2 and combined_odds <= 6.0:
                     risk = 'MEDIUM'
-                elif avg_conf >= 75 and num_legs <= 3 and combined_odds <= 10.0:
+                elif avg_conf >= 70 and num_legs <= 3 and combined_odds <= 10.0:
                     risk = 'MEDIUM'
                 else:
                     risk = 'HIGH'
                 
-                # Only include reasonable accumulators
-                if combined_odds <= 15.0 and avg_conf >= 75:  # Max 15x, min 75% avg
+                # Only include reasonable accumulators (less strict)
+                if combined_odds <= 20.0 and avg_conf >= 70:  # Increased from 15.0 and 75%
                     accumulators.append({
                         'legs': num_legs,
                         'selections': [
