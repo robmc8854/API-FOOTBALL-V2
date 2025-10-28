@@ -393,14 +393,23 @@ class AdvancedBettingAnalyzer:
         market_favorite = self.calculate_market_favorite(odds_response)
         
         if best_home > 0:
-            # Analyze Home Win
+            # Analyze Home Win - STRICT VALIDATION
             api_says_home = (api_recommendation == home_team)
             market_says_home = (market_favorite == 'home')
+            implied_prob_home = (1 / best_home) * 100
             
-            if api_says_home and market_says_home and ai_home >= 45:
-                implied_prob = (1 / best_home) * 100
+            # Only add if ALL conditions met:
+            # 1. API recommends home
+            # 2. Market favors home (odds should be reasonable, typically < 3.0 for favorites)
+            # 3. AI probability > Implied probability (value bet)
+            # 4. Minimum confidence threshold
+            if (api_says_home and market_says_home and 
+                ai_home > implied_prob_home and 
+                ai_home >= 50 and 
+                best_home <= 3.0):  # Reasonable favorite odds
+                
                 ev = ((ai_home / 100) * best_home) - 1
-                confidence = min(ai_home * 1.1, 95)
+                confidence = min(ai_home, 90)  # Don't inflate
                 
                 all_bets.append({
                     'market': 'Match Winner',
@@ -408,23 +417,27 @@ class AdvancedBettingAnalyzer:
                     'odds': best_home,
                     'confidence': confidence,
                     'ai_probability': ai_home,
-                    'implied_probability': implied_prob,
+                    'implied_probability': implied_prob_home,
                     'expected_value': ev,
                     'api_agrees': True,
                     'market_agrees': True,
                     'bookmaker': mw_bookmaker,
                     'has_10bet': mw_has_10bet,
-                    'reasoning': f'API predicts {home_team}. Market favors home. AI: {ai_home:.1f}%'
+                    'reasoning': f'API predicts {home_team}. Market odds {best_home:.2f}. Value: AI {ai_home:.1f}% > Implied {implied_prob_home:.1f}%'
                 })
             
-            # Analyze Away Win
+            # Analyze Away Win - STRICT VALIDATION
             api_says_away = (api_recommendation == away_team)
             market_says_away = (market_favorite == 'away')
+            implied_prob_away = (1 / best_away) * 100
             
-            if api_says_away and market_says_away and ai_away >= 45:
-                implied_prob = (1 / best_away) * 100
+            if (api_says_away and market_says_away and 
+                ai_away > implied_prob_away and 
+                ai_away >= 50 and 
+                best_away <= 3.0):
+                
                 ev = ((ai_away / 100) * best_away) - 1
-                confidence = min(ai_away * 1.1, 95)
+                confidence = min(ai_away, 90)
                 
                 all_bets.append({
                     'market': 'Match Winner',
@@ -432,22 +445,28 @@ class AdvancedBettingAnalyzer:
                     'odds': best_away,
                     'confidence': confidence,
                     'ai_probability': ai_away,
-                    'implied_probability': implied_prob,
+                    'implied_probability': implied_prob_away,
                     'expected_value': ev,
                     'api_agrees': True,
                     'market_agrees': True,
                     'bookmaker': mw_bookmaker,
                     'has_10bet': mw_has_10bet,
-                    'reasoning': f'API predicts {away_team}. Market favors away. AI: {ai_away:.1f}%'
+                    'reasoning': f'API predicts {away_team}. Market odds {best_away:.2f}. Value: AI {ai_away:.1f}% > Implied {implied_prob_away:.1f}%'
                 })
             
-            # Analyze Draw (only if both teams weak or evenly matched)
-            if ai_draw >= 25 and abs(ai_home - ai_away) < 15:
-                implied_prob = (1 / best_draw) * 100
+            # Analyze Draw - VERY STRICT (draws are risky)
+            implied_prob_draw = (1 / best_draw) * 100
+            
+            # Only if: teams evenly matched, AI > implied, and positive EV
+            if (abs(ai_home - ai_away) < 10 and 
+                ai_draw > implied_prob_draw and 
+                ai_draw >= 30 and 
+                best_draw >= 3.0 and best_draw <= 4.0):  # Typical draw odds
+                
                 ev = ((ai_draw / 100) * best_draw) - 1
                 
-                if ev > 0:
-                    confidence = min(ai_draw * 0.9, 75)
+                if ev > 0.05:  # Need at least 5% edge for draws
+                    confidence = min(ai_draw * 0.85, 70)  # Conservative
                     
                     all_bets.append({
                         'market': 'Match Winner',
@@ -455,34 +474,39 @@ class AdvancedBettingAnalyzer:
                         'odds': best_draw,
                         'confidence': confidence,
                         'ai_probability': ai_draw,
-                        'implied_probability': implied_prob,
+                        'implied_probability': implied_prob_draw,
                         'expected_value': ev,
                         'api_agrees': True,
                         'market_agrees': True,
                         'bookmaker': mw_bookmaker,
                         'has_10bet': mw_has_10bet,
-                        'reasoning': f'Teams evenly matched. AI: {ai_draw:.1f}%'
+                        'reasoning': f'Evenly matched teams. Value: AI {ai_draw:.1f}% > Implied {implied_prob_draw:.1f}%'
                     })
         
-        # 2. BTTS ANALYSIS
+        # 2. BTTS ANALYSIS - PROPER VALIDATION
         btts_odds = self.extract_btts_odds(odds_response)
         if btts_odds:
             # Get goals data using safe extraction
             home_avg = self.safe_extract_goals_avg(pred_data, 'home')
             away_avg = self.safe_extract_goals_avg(pred_data, 'away')
             
-            # BTTS Yes
-            if home_avg > 1.0 and away_avg > 1.0:
-                btts_yes_prob = min((home_avg + away_avg) * 25, 85)
+            # BTTS Yes - both teams must be scoring regularly
+            if home_avg >= 1.0 and away_avg >= 1.0:
+                # Calculate realistic probability based on scoring rates
+                btts_yes_prob = min((home_avg * away_avg * 35), 80)  # More conservative
                 implied_prob = (1 / btts_odds['yes']) * 100
                 ev = ((btts_yes_prob / 100) * btts_odds['yes']) - 1
                 
-                if ev > 0 and btts_yes_prob >= 55:
+                # Only add if: probability > implied AND positive EV AND reasonable odds
+                if (btts_yes_prob > implied_prob and 
+                    ev > 0.03 and 
+                    btts_odds['yes'] >= 1.4 and btts_odds['yes'] <= 2.5):
+                    
                     all_bets.append({
                         'market': 'Both Teams To Score',
                         'selection': 'Yes',
                         'odds': btts_odds['yes'],
-                        'confidence': btts_yes_prob,
+                        'confidence': min(btts_yes_prob, 75),
                         'ai_probability': btts_yes_prob,
                         'implied_probability': implied_prob,
                         'expected_value': ev,
@@ -490,21 +514,24 @@ class AdvancedBettingAnalyzer:
                         'market_agrees': True,
                         'bookmaker': btts_odds['bookmaker'],
                         'has_10bet': btts_odds['has_10bet'],
-                        'reasoning': f'Both teams averaging {home_avg:.1f} and {away_avg:.1f} goals'
+                        'reasoning': f'Both teams scoring: {home_team} avg {home_avg:.1f}, {away_team} avg {away_avg:.1f}'
                     })
             
-            # BTTS No
-            elif home_avg < 0.8 or away_avg < 0.8:
-                btts_no_prob = min(100 - (home_avg + away_avg) * 25, 85)
+            # BTTS No - at least one team defensively solid
+            elif home_avg <= 0.7 or away_avg <= 0.7:
+                btts_no_prob = min(85 - (home_avg + away_avg) * 20, 75)
                 implied_prob = (1 / btts_odds['no']) * 100
                 ev = ((btts_no_prob / 100) * btts_odds['no']) - 1
                 
-                if ev > 0 and btts_no_prob >= 55:
+                if (btts_no_prob > implied_prob and 
+                    ev > 0.03 and 
+                    btts_odds['no'] >= 1.4 and btts_odds['no'] <= 2.5):
+                    
                     all_bets.append({
                         'market': 'Both Teams To Score',
                         'selection': 'No',
                         'odds': btts_odds['no'],
-                        'confidence': btts_no_prob,
+                        'confidence': min(btts_no_prob, 70),
                         'ai_probability': btts_no_prob,
                         'implied_probability': implied_prob,
                         'expected_value': ev,
@@ -512,10 +539,10 @@ class AdvancedBettingAnalyzer:
                         'market_agrees': True,
                         'bookmaker': btts_odds['bookmaker'],
                         'has_10bet': btts_odds['has_10bet'],
-                        'reasoning': f'Low scoring: {home_avg:.1f} and {away_avg:.1f} avg goals'
+                        'reasoning': f'Low scoring: {home_team} avg {home_avg:.1f}, {away_team} avg {away_avg:.1f}'
                     })
         
-        # 3. OVER/UNDER ANALYSIS
+        # 3. OVER/UNDER ANALYSIS - STRICT VALIDATION
         ou_odds = self.extract_over_under_odds(odds_response)
         if ou_odds:
             # Get goals data using safe extraction
@@ -527,18 +554,23 @@ class AdvancedBettingAnalyzer:
                 try:
                     line_float = float(line)
                     
-                    # Over analysis
-                    if total_avg > line_float:
-                        over_prob = min(60 + (total_avg - line_float) * 15, 85)
+                    # Over analysis - need significant edge
+                    if total_avg > line_float + 0.3:  # Need buffer
+                        # More conservative probability calculation
+                        over_prob = min(50 + (total_avg - line_float) * 12, 75)
                         implied_prob = (1 / odds_data['over']) * 100
                         ev = ((over_prob / 100) * odds_data['over']) - 1
                         
-                        if ev > 0 and over_prob >= 60:
+                        # Strict conditions: prob > implied, positive EV, reasonable odds
+                        if (over_prob > implied_prob and 
+                            ev > 0.05 and 
+                            odds_data['over'] >= 1.5 and odds_data['over'] <= 2.5):
+                            
                             all_bets.append({
                                 'market': f'Over/Under {line}',
                                 'selection': f'Over {line}',
                                 'odds': odds_data['over'],
-                                'confidence': over_prob,
+                                'confidence': min(over_prob, 70),
                                 'ai_probability': over_prob,
                                 'implied_probability': implied_prob,
                                 'expected_value': ev,
@@ -546,21 +578,24 @@ class AdvancedBettingAnalyzer:
                                 'market_agrees': True,
                                 'bookmaker': odds_data['bookmaker'],
                                 'has_10bet': odds_data['has_10bet'],
-                                'reasoning': f'Avg goals: {total_avg:.1f} > {line}'
+                                'reasoning': f'Expected {total_avg:.1f} goals vs {line} line. Edge: {total_avg - line_float:.1f} goals'
                             })
                     
-                    # Under analysis
-                    elif total_avg < line_float - 0.3:
-                        under_prob = min(60 + (line_float - total_avg) * 15, 85)
+                    # Under analysis - need significant edge
+                    elif total_avg < line_float - 0.3:  # Need buffer
+                        under_prob = min(50 + (line_float - total_avg) * 12, 75)
                         implied_prob = (1 / odds_data['under']) * 100
                         ev = ((under_prob / 100) * odds_data['under']) - 1
                         
-                        if ev > 0 and under_prob >= 60:
+                        if (under_prob > implied_prob and 
+                            ev > 0.05 and 
+                            odds_data['under'] >= 1.5 and odds_data['under'] <= 2.5):
+                            
                             all_bets.append({
                                 'market': f'Over/Under {line}',
                                 'selection': f'Under {line}',
                                 'odds': odds_data['under'],
-                                'confidence': under_prob,
+                                'confidence': min(under_prob, 70),
                                 'ai_probability': under_prob,
                                 'implied_probability': implied_prob,
                                 'expected_value': ev,
@@ -568,26 +603,30 @@ class AdvancedBettingAnalyzer:
                                 'market_agrees': True,
                                 'bookmaker': odds_data['bookmaker'],
                                 'has_10bet': odds_data['has_10bet'],
-                                'reasoning': f'Avg goals: {total_avg:.1f} < {line}'
+                                'reasoning': f'Expected {total_avg:.1f} goals vs {line} line. Edge: {line_float - total_avg:.1f} goals buffer'
                             })
                 except:
                     continue
         
-        # 4. DOUBLE CHANCE ANALYSIS
+        # 4. DOUBLE CHANCE ANALYSIS - CONSERVATIVE ONLY
         dc_odds = self.extract_double_chance_odds(odds_response)
         if dc_odds:
-            # 1X (Home or Draw) - when home is strong
-            if ai_home + ai_draw >= 65:
+            # 1X (Home or Draw) - when home is strong favorite
+            if ai_home >= 45 and ai_home + ai_draw >= 70:
                 dc_prob = ai_home + ai_draw
                 implied_prob = (1 / dc_odds['1X']) * 100
                 ev = ((dc_prob / 100) * dc_odds['1X']) - 1
                 
-                if ev > 0:
+                # Only add if: probability > implied AND positive EV AND low odds (safe bet)
+                if (dc_prob > implied_prob and 
+                    ev > 0.03 and 
+                    dc_odds['1X'] >= 1.1 and dc_odds['1X'] <= 1.4):
+                    
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{home_team} or Draw',
                         'odds': dc_odds['1X'],
-                        'confidence': min(dc_prob, 90),
+                        'confidence': min(dc_prob * 0.9, 85),  # Conservative
                         'ai_probability': dc_prob,
                         'implied_probability': implied_prob,
                         'expected_value': ev,
@@ -595,21 +634,24 @@ class AdvancedBettingAnalyzer:
                         'market_agrees': True,
                         'bookmaker': dc_odds['bookmaker'],
                         'has_10bet': dc_odds['has_10bet'],
-                        'reasoning': f'Home strong: {ai_home:.1f}% + Draw: {ai_draw:.1f}%'
+                        'reasoning': f'Safe bet: {home_team} strong ({ai_home:.1f}%) or draw ({ai_draw:.1f}%)'
                     })
             
-            # X2 (Draw or Away) - when away is strong
-            if ai_away + ai_draw >= 65:
+            # X2 (Draw or Away) - when away is strong favorite
+            if ai_away >= 45 and ai_away + ai_draw >= 70:
                 dc_prob = ai_away + ai_draw
                 implied_prob = (1 / dc_odds['X2']) * 100
                 ev = ((dc_prob / 100) * dc_odds['X2']) - 1
                 
-                if ev > 0:
+                if (dc_prob > implied_prob and 
+                    ev > 0.03 and 
+                    dc_odds['X2'] >= 1.1 and dc_odds['X2'] <= 1.4):
+                    
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{away_team} or Draw',
                         'odds': dc_odds['X2'],
-                        'confidence': min(dc_prob, 90),
+                        'confidence': min(dc_prob * 0.9, 85),
                         'ai_probability': dc_prob,
                         'implied_probability': implied_prob,
                         'expected_value': ev,
@@ -617,21 +659,24 @@ class AdvancedBettingAnalyzer:
                         'market_agrees': True,
                         'bookmaker': dc_odds['bookmaker'],
                         'has_10bet': dc_odds['has_10bet'],
-                        'reasoning': f'Away strong: {ai_away:.1f}% + Draw: {ai_draw:.1f}%'
+                        'reasoning': f'Safe bet: {away_team} strong ({ai_away:.1f}%) or draw ({ai_draw:.1f}%)'
                     })
             
-            # 12 (Home or Away) - when draw unlikely
-            if ai_home + ai_away >= 70:
+            # 12 (Home or Away) - when draw very unlikely
+            if ai_draw <= 20 and ai_home + ai_away >= 75:
                 dc_prob = ai_home + ai_away
                 implied_prob = (1 / dc_odds['12']) * 100
                 ev = ((dc_prob / 100) * dc_odds['12']) - 1
                 
-                if ev > 0:
+                if (dc_prob > implied_prob and 
+                    ev > 0.03 and 
+                    dc_odds['12'] >= 1.1 and dc_odds['12'] <= 1.5):
+                    
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{home_team} or {away_team}',
                         'odds': dc_odds['12'],
-                        'confidence': min(dc_prob, 90),
+                        'confidence': min(dc_prob * 0.9, 85),
                         'ai_probability': dc_prob,
                         'implied_probability': implied_prob,
                         'expected_value': ev,
@@ -639,7 +684,7 @@ class AdvancedBettingAnalyzer:
                         'market_agrees': True,
                         'bookmaker': dc_odds['bookmaker'],
                         'has_10bet': dc_odds['has_10bet'],
-                        'reasoning': f'Draw unlikely: {ai_draw:.1f}%'
+                        'reasoning': f'No draw expected ({ai_draw:.1f}%). Clear winner likely'
                     })
         
         if not all_bets:
