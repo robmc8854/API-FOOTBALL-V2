@@ -229,28 +229,29 @@ class CompleteBettingAnalyzer:
     
     def analyze_comprehensive(self, fixture: Dict) -> Optional[Dict]:
         """COMPLETE analysis using ALL data properly"""
-        fixture_id = fixture['fixture']['id']
-        home_team = fixture['teams']['home']['name']
-        away_team = fixture['teams']['away']['name']
-        league = fixture['league']['name']
-        country = fixture['league']['country']
-        match_time = fixture['fixture']['date']
-        
-        print(f"\n  📊 {home_team} vs {away_team}")
-        
-        pred_full = self.get_predictions(fixture_id)
-        if not pred_full:
-            print(f"      ❌ No predictions")
-            return None
-        
-        odds_response = self.get_fixture_odds(fixture_id)
-        if not odds_response:
-            print(f"      ❌ No odds")
-            return None
-        
-        predictions = pred_full.get('predictions', {})
-        teams_data = pred_full.get('teams', {})
-        comparison = pred_full.get('comparison', {})
+        try:
+            fixture_id = fixture['fixture']['id']
+            home_team = fixture['teams']['home']['name']
+            away_team = fixture['teams']['away']['name']
+            league = fixture['league']['name']
+            country = fixture['league']['country']
+            match_time = fixture['fixture']['date']
+            
+            print(f"\n  📊 {home_team} vs {away_team}")
+            
+            pred_full = self.get_predictions(fixture_id)
+            if not pred_full:
+                print(f"      ❌ No predictions")
+                return None
+            
+            odds_response = self.get_fixture_odds(fixture_id)
+            if not odds_response:
+                print(f"      ❌ No odds")
+                return None
+            
+            predictions = pred_full.get('predictions', {})
+            teams_data = pred_full.get('teams', {})
+            comparison = pred_full.get('comparison', {})
         
         # === ALL PROBABILITIES ===
         percent = predictions.get('percent', {})
@@ -693,6 +694,12 @@ class CompleteBettingAnalyzer:
             'all_bets': all_bets,
             'total_opportunities': len(all_bets)
         }
+        
+        except Exception as e:
+            print(f"      ❌ Error analyzing fixture: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 analyzer = None
 
