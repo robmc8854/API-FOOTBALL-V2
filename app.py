@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Advanced Multi-Market Betting Optimizer - BALANCED VERSION
-Analyzes ALL markets equally: Match Winner, BTTS, Over/Under, Double Chance
-Each market validated with: API prediction + Market direction + AI probability
+ULTIMATE Multi-Market Betting Optimizer
+Uses ALL available data: API advice, Poisson distribution, H2H, form, attack/defense strength,
+clean sheets, predicted scores, market odds, and cross-validates everything
 """
 
 from flask import Flask, render_template, jsonify, request
@@ -10,14 +10,14 @@ import requests
 import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
-import itertools
+import re
 
 app = Flask(__name__)
 
 API_KEY = os.environ.get('API_SPORTS_KEY', '')
 BASE_URL = "https://v3.football.api-sports.io"
 
-class AdvancedBettingAnalyzer:
+class UltimateBettingAnalyzer:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = BASE_URL
@@ -40,7 +40,6 @@ class AdvancedBettingAnalyzer:
     def get_todays_fixtures(self) -> List[Dict]:
         """Get all fixtures for today"""
         today = datetime.now().strftime('%Y-%m-%d')
-        
         print(f"Fetching fixtures for {today}...")
         data = self.make_request('fixtures', params={'date': today})
         
@@ -48,8 +47,6 @@ class AdvancedBettingAnalyzer:
             return []
         
         fixtures = data['response']
-        print(f"Total fixtures found: {len(fixtures)}")
-        
         now = datetime.now(timezone.utc)
         upcoming = []
         
@@ -64,290 +61,148 @@ class AdvancedBettingAnalyzer:
             except:
                 continue
         
-        print(f"Upcoming fixtures: {len(upcoming)}")
+        print(f"Found {len(upcoming)} upcoming fixtures")
         return upcoming
     
     def get_fixture_odds(self, fixture_id: int) -> Optional[Dict]:
         """Get all bookmaker odds"""
         data = self.make_request('odds', params={'fixture': fixture_id})
-        
-        if not data or 'response' not in data or len(data['response']) == 0:
-            return None
-        
-        return data['response'][0]
+        return data['response'][0] if data and 'response' in data and data['response'] else None
     
     def get_predictions(self, fixture_id: int) -> Optional[Dict]:
-        """Get API-Sports predictions"""
+        """Get comprehensive predictions data"""
         data = self.make_request('predictions', params={'fixture': fixture_id})
-        
-        if not data or 'response' not in data or len(data['response']) == 0:
-            return None
-        
-        return data['response'][0]
+        return data['response'][0] if data and 'response' in data and data['response'] else None
     
-    def safe_extract_goals_avg(self, pred_data: Dict, team: str = 'home') -> float:
-        """Safely extract team's average goals from predictions data"""
+    def safe_float(self, value, default=0.0) -> float:
+        """Safely convert string percentage or number to float"""
         try:
-            goals_data = pred_data.get('goals', {})
-            if not isinstance(goals_data, dict):
-                return 0.0
-            
-            team_data = goals_data.get(team, {})
-            if not isinstance(team_data, dict):
-                return 0.0
-            
-            avg_data = team_data.get('average', {})
-            if not isinstance(avg_data, dict):
-                return 0.0
-            
-            total = avg_data.get('total', 0)
-            if isinstance(total, str):
-                return float(total) if total else 0.0
-            return float(total)
+            if isinstance(value, str):
+                return float(value.replace('%', ''))
+            return float(value) if value else default
         except:
-            return 0.0
+            return default
     
-    def extract_match_winner_odds(self, odds_response: Dict) -> Tuple[float, float, float, str, bool]:
-        """Get BEST Match Winner odds"""
+    def parse_score_range(self, score_str: str) -> Tuple[float, float]:
+        """Parse '1-2' into (1.0, 2.0)"""
+        try:
+            if '-' in score_str:
+                parts = score_str.split('-')
+                return (float(parts[0]), float(parts[1]))
+            return (float(score_str), float(score_str))
+        except:
+            return (0.0, 0.0)
+    
+    def extract_all_odds(self, odds_response: Dict) -> Dict:
+        """Extract ALL market odds efficiently"""
         bookmakers = odds_response.get('bookmakers', [])
         
-        best_home = 0.0
-        best_draw = 0.0
-        best_away = 0.0
-        best_bookmaker = 'Unknown'
-        has_10bet = False
-        
-        for bookmaker in bookmakers:
-            bookmaker_name = bookmaker.get('name', '')
-            bookmaker_id = bookmaker.get('id', 0)
-            bets = bookmaker.get('bets', [])
-            
-            is_10bet = ('10bet' in bookmaker_name.lower() or bookmaker_id == 1)
-            if is_10bet:
-                has_10bet = True
-            
-            for bet in bets:
-                if bet.get('name') == 'Match Winner' or bet.get('id') == 1:
-                    values = bet.get('values', [])
-                    home = 0.0
-                    draw = 0.0
-                    away = 0.0
-                    
-                    for value in values:
-                        odd_value = float(value.get('odd', 0))
-                        value_name = value.get('value', '').lower()
-                        
-                        if value_name in ['home', '1']:
-                            home = odd_value
-                        elif value_name in ['draw', 'x']:
-                            draw = odd_value
-                        elif value_name in ['away', '2']:
-                            away = odd_value
-                    
-                    if home > 0 and draw > 0 and away > 0:
-                        if home > best_home:
-                            best_home = home
-                            best_bookmaker = bookmaker_name
-                        if draw > best_draw:
-                            best_draw = draw
-                        if away > best_away:
-                            best_away = away
-        
-        return (best_home, best_draw, best_away, best_bookmaker, has_10bet)
-    
-    def extract_btts_odds(self, odds_response: Dict) -> Optional[Dict]:
-        """Extract Both Teams To Score odds"""
-        bookmakers = odds_response.get('bookmakers', [])
-        
-        best_yes = 0.0
-        best_no = 0.0
-        bookmaker_name = 'Unknown'
-        has_10bet = False
+        result = {
+            'match_winner': {'home': 0, 'draw': 0, 'away': 0, 'bookmaker': '', 'has_10bet': False},
+            'btts': {'yes': 0, 'no': 0, 'bookmaker': '', 'has_10bet': False},
+            'over_under': {},
+            'double_chance': {'1X': 0, '12': 0, 'X2': 0, 'bookmaker': '', 'has_10bet': False}
+        }
         
         for bookmaker in bookmakers:
             bm_name = bookmaker.get('name', '')
-            bm_id = bookmaker.get('id', 0)
-            bets = bookmaker.get('bets', [])
+            is_10bet = '10bet' in bm_name.lower() or bookmaker.get('id', 0) == 1
             
-            is_10bet = ('10bet' in bm_name.lower() or bm_id == 1)
-            
-            for bet in bets:
+            for bet in bookmaker.get('bets', []):
                 bet_name = bet.get('name', '')
+                values = bet.get('values', [])
                 
-                if 'Both Teams Score' in bet_name or bet.get('id') == 8:
-                    values = bet.get('values', [])
-                    yes_odd = 0.0
-                    no_odd = 0.0
-                    
+                if 'Match Winner' in bet_name:
                     for value in values:
-                        odd_value = float(value.get('odd', 0))
-                        value_name = value.get('value', '').lower()
-                        
-                        if 'yes' in value_name:
-                            yes_odd = odd_value
-                        elif 'no' in value_name:
-                            no_odd = odd_value
-                    
-                    if yes_odd > 0 and no_odd > 0:
-                        if yes_odd > best_yes:
-                            best_yes = yes_odd
-                            best_no = no_odd
-                            bookmaker_name = bm_name
-                            if is_10bet:
-                                has_10bet = True
+                        odd = self.safe_float(value.get('odd', 0))
+                        val_name = value.get('value', '').lower()
+                        if 'home' in val_name or val_name == '1':
+                            if odd > result['match_winner']['home']:
+                                result['match_winner'].update({'home': odd, 'bookmaker': bm_name, 'has_10bet': is_10bet})
+                        elif 'draw' in val_name or val_name == 'x':
+                            if odd > result['match_winner']['draw']:
+                                result['match_winner']['draw'] = odd
+                        elif 'away' in val_name or val_name == '2':
+                            if odd > result['match_winner']['away']:
+                                result['match_winner']['away'] = odd
+                
+                elif 'Both Teams Score' in bet_name:
+                    for value in values:
+                        odd = self.safe_float(value.get('odd', 0))
+                        val_name = value.get('value', '').lower()
+                        if 'yes' in val_name and odd > result['btts']['yes']:
+                            result['btts'].update({'yes': odd, 'bookmaker': bm_name, 'has_10bet': is_10bet})
+                        elif 'no' in val_name and odd > result['btts']['no']:
+                            result['btts']['no'] = odd
+                
+                elif 'Over/Under' in bet_name or 'Goals Over/Under' in bet_name:
+                    for value in values:
+                        odd = self.safe_float(value.get('odd', 0))
+                        val_name = value.get('value', '')
+                        if 'Over' in val_name:
+                            line = val_name.split()[-1]
+                            if line not in result['over_under']:
+                                result['over_under'][line] = {'over': 0, 'under': 0, 'bookmaker': '', 'has_10bet': False}
+                            if odd > result['over_under'][line]['over']:
+                                result['over_under'][line].update({'over': odd, 'bookmaker': bm_name, 'has_10bet': is_10bet})
+                        elif 'Under' in val_name:
+                            line = val_name.split()[-1]
+                            if line not in result['over_under']:
+                                result['over_under'][line] = {'over': 0, 'under': 0, 'bookmaker': '', 'has_10bet': False}
+                            if odd > result['over_under'][line]['under']:
+                                result['over_under'][line]['under'] = odd
+                
+                elif 'Double Chance' in bet_name:
+                    for value in values:
+                        odd = self.safe_float(value.get('odd', 0))
+                        val_name = value.get('value', '')
+                        if 'Home/Draw' in val_name or val_name == '1X':
+                            if odd > result['double_chance']['1X']:
+                                result['double_chance'].update({'1X': odd, 'bookmaker': bm_name, 'has_10bet': is_10bet})
+                        elif 'Home/Away' in val_name or val_name == '12':
+                            if odd > result['double_chance']['12']:
+                                result['double_chance']['12'] = odd
+                        elif 'Draw/Away' in val_name or val_name == 'X2':
+                            if odd > result['double_chance']['X2']:
+                                result['double_chance']['X2'] = odd
         
-        if best_yes > 0 and best_no > 0:
+        return result
+    
+    def calculate_market_probabilities(self, odds_response: Dict) -> Dict:
+        """Calculate market consensus probabilities"""
+        bookmakers = odds_response.get('bookmakers', [])
+        home_odds, draw_odds, away_odds = [], [], []
+        
+        for bookmaker in bookmakers:
+            for bet in bookmaker.get('bets', []):
+                if 'Match Winner' in bet.get('name', ''):
+                    for value in bet.get('values', []):
+                        odd = self.safe_float(value.get('odd', 0))
+                        val_name = value.get('value', '').lower()
+                        if odd > 0:
+                            if 'home' in val_name or val_name == '1':
+                                home_odds.append(odd)
+                            elif 'draw' in val_name or val_name == 'x':
+                                draw_odds.append(odd)
+                            elif 'away' in val_name or val_name == '2':
+                                away_odds.append(odd)
+        
+        avg_home = sum(home_odds) / len(home_odds) if home_odds else 999
+        avg_draw = sum(draw_odds) / len(draw_odds) if draw_odds else 999
+        avg_away = sum(away_odds) / len(away_odds) if away_odds else 999
+        
+        total = (1/avg_home if avg_home < 999 else 0) + (1/avg_draw if avg_draw < 999 else 0) + (1/avg_away if avg_away < 999 else 0)
+        
+        if total > 0:
             return {
-                'yes': best_yes,
-                'no': best_no,
-                'bookmaker': bookmaker_name,
-                'has_10bet': has_10bet
+                'home': (1/avg_home) / total * 100,
+                'draw': (1/avg_draw) / total * 100,
+                'away': (1/avg_away) / total * 100
             }
-        return None
+        return {'home': 33.3, 'draw': 33.3, 'away': 33.3}
     
-    def extract_over_under_odds(self, odds_response: Dict) -> Dict[str, Dict]:
-        """Extract Over/Under odds for multiple lines"""
-        bookmakers = odds_response.get('bookmakers', [])
-        
-        lines = {}
-        
-        for bookmaker in bookmakers:
-            bm_name = bookmaker.get('name', '')
-            bm_id = bookmaker.get('id', 0)
-            bets = bookmaker.get('bets', [])
-            
-            is_10bet = ('10bet' in bm_name.lower() or bm_id == 1)
-            
-            for bet in bets:
-                bet_name = bet.get('name', '')
-                
-                if 'Over/Under' in bet_name or 'Goals Over/Under' in bet_name:
-                    values = bet.get('values', [])
-                    
-                    over_odd = 0.0
-                    under_odd = 0.0
-                    line = None
-                    
-                    for value in values:
-                        odd_value = float(value.get('odd', 0))
-                        value_name = value.get('value', '')
-                        
-                        if 'Over' in value_name:
-                            over_odd = odd_value
-                            try:
-                                line = value_name.split()[-1]
-                            except:
-                                pass
-                        elif 'Under' in value_name:
-                            under_odd = odd_value
-                            try:
-                                line = value_name.split()[-1]
-                            except:
-                                pass
-                    
-                    if line and over_odd > 0 and under_odd > 0:
-                        if line not in lines or over_odd > lines[line]['over']:
-                            lines[line] = {
-                                'over': over_odd,
-                                'under': under_odd,
-                                'bookmaker': bm_name,
-                                'has_10bet': is_10bet
-                            }
-        
-        return lines
-    
-    def extract_double_chance_odds(self, odds_response: Dict) -> Optional[Dict]:
-        """Extract Double Chance odds"""
-        bookmakers = odds_response.get('bookmakers', [])
-        
-        best_1x = 0.0
-        best_12 = 0.0
-        best_x2 = 0.0
-        bookmaker_name = 'Unknown'
-        has_10bet = False
-        
-        for bookmaker in bookmakers:
-            bm_name = bookmaker.get('name', '')
-            bm_id = bookmaker.get('id', 0)
-            bets = bookmaker.get('bets', [])
-            
-            is_10bet = ('10bet' in bm_name.lower() or bm_id == 1)
-            
-            for bet in bets:
-                bet_name = bet.get('name', '')
-                
-                if 'Double Chance' in bet_name or bet.get('id') == 7:
-                    values = bet.get('values', [])
-                    
-                    for value in values:
-                        odd_value = float(value.get('odd', 0))
-                        value_name = value.get('value', '')
-                        
-                        if 'Home/Draw' in value_name or value_name == '1X':
-                            if odd_value > best_1x:
-                                best_1x = odd_value
-                        elif 'Home/Away' in value_name or value_name == '12':
-                            if odd_value > best_12:
-                                best_12 = odd_value
-                        elif 'Draw/Away' in value_name or value_name == 'X2':
-                            if odd_value > best_x2:
-                                best_x2 = odd_value
-                    
-                    if best_1x > 0:
-                        bookmaker_name = bm_name
-                        if is_10bet:
-                            has_10bet = True
-        
-        if best_1x > 0 and best_12 > 0 and best_x2 > 0:
-            return {
-                '1X': best_1x,
-                '12': best_12,
-                'X2': best_x2,
-                'bookmaker': bookmaker_name,
-                'has_10bet': has_10bet
-            }
-        return None
-    
-    def calculate_market_favorite(self, odds_response: Dict) -> str:
-        """Calculate who the market thinks will win"""
-        bookmakers = odds_response.get('bookmakers', [])
-        
-        home_odds_list = []
-        draw_odds_list = []
-        away_odds_list = []
-        
-        for bookmaker in bookmakers:
-            bets = bookmaker.get('bets', [])
-            
-            for bet in bets:
-                if bet.get('name') == 'Match Winner' or bet.get('id') == 1:
-                    values = bet.get('values', [])
-                    
-                    for value in values:
-                        odd_value = float(value.get('odd', 0))
-                        value_name = value.get('value', '').lower()
-                        
-                        if odd_value > 0:
-                            if value_name in ['home', '1']:
-                                home_odds_list.append(odd_value)
-                            elif value_name in ['draw', 'x']:
-                                draw_odds_list.append(odd_value)
-                            elif value_name in ['away', '2']:
-                                away_odds_list.append(odd_value)
-        
-        avg_home = sum(home_odds_list) / len(home_odds_list) if home_odds_list else 999
-        avg_draw = sum(draw_odds_list) / len(draw_odds_list) if draw_odds_list else 999
-        avg_away = sum(away_odds_list) / len(away_odds_list) if away_odds_list else 999
-        
-        if avg_home < avg_draw and avg_home < avg_away:
-            return 'home'
-        elif avg_away < avg_home and avg_away < avg_draw:
-            return 'away'
-        else:
-            return 'draw'
-    
-    def analyze_all_markets(self, fixture: Dict) -> Optional[Dict]:
-        """Analyze ALL markets with equal treatment - find truly best bets"""
+    def analyze_comprehensive(self, fixture: Dict) -> Optional[Dict]:
+        """ULTIMATE analysis using ALL available data sources"""
         fixture_id = fixture['fixture']['id']
         home_team = fixture['teams']['home']['name']
         away_team = fixture['teams']['away']['name']
@@ -355,289 +210,430 @@ class AdvancedBettingAnalyzer:
         country = fixture['league']['country']
         match_time = fixture['fixture']['date']
         
-        print(f"  📊 {home_team} vs {away_team}")
+        print(f"\n  📊 {home_team} vs {away_team}")
         
-        # Get predictions
-        predictions = self.get_predictions(fixture_id)
-        if not predictions:
-            print(f"      ❌ No predictions available")
+        # Get comprehensive data
+        pred_full = self.get_predictions(fixture_id)
+        if not pred_full:
+            print(f"      ❌ No predictions")
             return None
         
-        # Get odds
         odds_response = self.get_fixture_odds(fixture_id)
         if not odds_response:
-            print(f"      ❌ No odds available")
+            print(f"      ❌ No odds")
             return None
         
-        pred_data = predictions.get('predictions', {})
+        # Extract ALL prediction data
+        predictions = pred_full.get('predictions', {})
+        teams_data = pred_full.get('teams', {})
+        comparison = pred_full.get('comparison', {})
+        league_data = pred_full.get('league', {})
         
-        # Extract probabilities
-        winner_info = pred_data.get('winner', {})
-        api_recommendation = winner_info.get('name', '')
+        # === EXTRACT ALL PROBABILITIES ===
+        # 1. Basic AI percentages
+        percent = predictions.get('percent', {})
+        ai_home = self.safe_float(percent.get('home', 0))
+        ai_draw = self.safe_float(percent.get('draw', 0))
+        ai_away = self.safe_float(percent.get('away', 0))
         
-        percentages = pred_data.get('percent', {})
-        ai_home = float(str(percentages.get('home', '0')).replace('%', ''))
-        ai_draw = float(str(percentages.get('draw', '0')).replace('%', ''))
-        ai_away = float(str(percentages.get('away', '0')).replace('%', ''))
+        # 2. Poisson distribution (mathematical probability)
+        poisson = comparison.get('poisson_distribution', {})
+        poisson_home = self.safe_float(poisson.get('home', 0))
+        poisson_draw = self.safe_float(poisson.get('draw', 0))
+        poisson_away = self.safe_float(poisson.get('away', 0))
         
-        # Get goals averages
-        home_avg = self.safe_extract_goals_avg(pred_data, 'home')
-        away_avg = self.safe_extract_goals_avg(pred_data, 'away')
-        total_avg = home_avg + away_avg
+        # 3. Head-to-head historical probability
+        h2h = comparison.get('h2h', {})
+        h2h_home = self.safe_float(h2h.get('home', 0))
+        h2h_draw = self.safe_float(h2h.get('draw', 0))
+        h2h_away = self.safe_float(h2h.get('away', 0))
         
-        market_favorite = self.calculate_market_favorite(odds_response)
+        # 4. Market probabilities
+        market = self.calculate_market_probabilities(odds_response)
+        market_home = market['home']
+        market_draw = market['draw']
+        market_away = market['away']
         
-        print(f"      🤖 API: {api_recommendation if api_recommendation else 'None'} | Market: {market_favorite}")
-        print(f"      📈 Home: {ai_home}% | Draw: {ai_draw}% | Away: {ai_away}%")
-        print(f"      ⚽ Goals: {total_avg:.1f} (Home {home_avg:.1f} + Away {away_avg:.1f})")
+        # 5. Form comparison
+        form_comp = comparison.get('form', {})
+        form_home = self.safe_float(form_comp.get('home', 50))
+        form_away = self.safe_float(form_comp.get('away', 50))
+        
+        # 6. Attack/Defense strength
+        att_comp = comparison.get('att', {})
+        def_comp = comparison.get('def', {})
+        att_home = self.safe_float(att_comp.get('home', 50))
+        att_away = self.safe_float(att_comp.get('away', 50))
+        def_home = self.safe_float(def_comp.get('home', 50))
+        def_away = self.safe_float(def_comp.get('away', 50))
+        
+        # === COMBINED WEIGHTED PROBABILITIES ===
+        # Weight: Poisson 35%, AI 30%, Market 20%, H2H 10%, Form 5%
+        combined_home = (poisson_home * 0.35 + ai_home * 0.30 + market_home * 0.20 + 
+                        h2h_home * 0.10 + (form_home/100 * ai_home) * 0.05)
+        combined_draw = (poisson_draw * 0.35 + ai_draw * 0.30 + market_draw * 0.20 + 
+                        h2h_draw * 0.10 + 0.05 * ai_draw)
+        combined_away = (poisson_away * 0.35 + ai_away * 0.30 + market_away * 0.20 + 
+                        h2h_away * 0.10 + (form_away/100 * ai_away) * 0.05)
+        
+        # === API DIRECT RECOMMENDATIONS ===
+        api_winner = predictions.get('winner', {}).get('name', '')
+        api_advice = predictions.get('advice', '')
+        api_under_over = predictions.get('under_over', '')
+        
+        # === GOALS DATA ===
+        goals_pred = predictions.get('goals', {})
+        home_goals_range = self.parse_score_range(goals_pred.get('home', '0-0'))
+        away_goals_range = self.parse_score_range(goals_pred.get('away', '0-0'))
+        predicted_total_min = home_goals_range[0] + away_goals_range[0]
+        predicted_total_max = home_goals_range[1] + away_goals_range[1]
+        predicted_total_avg = (predicted_total_min + predicted_total_max) / 2
+        
+        # === TEAM STATS ===
+        home_team_data = teams_data.get('home', {})
+        away_team_data = teams_data.get('away', {})
+        
+        # Clean sheets & failed to score
+        home_league = home_team_data.get('league', {})
+        away_league = away_team_data.get('league', {})
+        
+        home_clean_sheets = self.safe_float(home_league.get('clean_sheet', {}).get('total', 0))
+        away_clean_sheets = self.safe_float(away_league.get('clean_sheet', {}).get('total', 0))
+        home_failed_score = self.safe_float(home_league.get('failed_to_score', {}).get('total', 0))
+        away_failed_score = self.safe_float(away_league.get('failed_to_score', {}).get('total', 0))
+        
+        # Last 5 form
+        home_last5 = home_team_data.get('last_5', {})
+        away_last5 = away_team_data.get('last_5', {})
+        home_form_str = home_last5.get('form', '')
+        away_form_str = away_last5.get('form', '')
+        
+        # Goals averages from league stats
+        home_goals_avg = self.safe_float(home_league.get('goals', {}).get('for', {}).get('average', {}).get('total', 0))
+        away_goals_avg = self.safe_float(away_league.get('goals', {}).get('for', {}).get('average', {}).get('total', 0))
+        
+        print(f"      🤖 API Winner: {api_winner} | Advice: {api_advice}")
+        print(f"      📊 Combined Prob: H:{combined_home:.1f}% D:{combined_draw:.1f}% A:{combined_away:.1f}%")
+        print(f"      🎲 Poisson: H:{poisson_home:.1f}% D:{poisson_draw:.1f}% A:{poisson_away:.1f}%")
+        print(f"      📈 Form: Home {form_home:.0f}% | Away {form_away:.0f}%")
+        print(f"      ⚽ Predicted Goals: {predicted_total_avg:.1f} ({predicted_total_min:.1f}-{predicted_total_max:.1f})")
+        print(f"      🛡️  Clean Sheets: H:{home_clean_sheets} A:{away_clean_sheets}")
+        
+        # Get odds
+        all_odds = self.extract_all_odds(odds_response)
         
         all_bets = []
         
-        # === MATCH WINNER ===
-        mw_odds = self.extract_match_winner_odds(odds_response)
-        best_home, best_draw, best_away, mw_bookmaker, mw_has_10bet = mw_odds
-        
-        if best_home > 0:
-            # Home Win
-            if api_recommendation == home_team and market_favorite == 'home' and ai_home >= 50:
-                impl_prob = (1 / best_home) * 100
-                ev = ((ai_home / 100) * best_home) - 1
-                if ev > 0:
+        # ========== MATCH WINNER ==========
+        mw = all_odds['match_winner']
+        if mw['home'] > 0:
+            # Home Win - use combined probability
+            if (combined_home >= 55 and 
+                combined_home > market_home + 5 and
+                api_winner == home_team and
+                form_home >= 45 and
+                mw['home'] >= 1.4 and mw['home'] <= 3.5):
+                
+                impl_prob = (1 / mw['home']) * 100
+                ev = ((combined_home / 100) * mw['home']) - 1
+                
+                # Confidence = weighted average of all sources
+                confidence = (combined_home * 0.6 + poisson_home * 0.25 + ai_home * 0.15)
+                
+                if ev > 0.07:
                     all_bets.append({
                         'market': 'Match Winner',
                         'selection': f'{home_team} Win',
-                        'odds': best_home,
-                        'confidence': min(ai_home, 90),
-                        'ai_probability': ai_home,
+                        'odds': mw['home'],
+                        'confidence': min(confidence, 90),
+                        'ai_probability': combined_home,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': ai_home + (ev * 50),
+                        'quality_score': confidence + (ev * 150),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': mw_bookmaker,
-                        'has_10bet': mw_has_10bet,
-                        'reasoning': f'Strong home favorite. API & market agree. {ai_home:.0f}% confidence'
+                        'bookmaker': mw['bookmaker'],
+                        'has_10bet': mw['has_10bet'],
+                        'reasoning': f'Strong consensus: Poisson {poisson_home:.0f}%, AI {ai_home:.0f}%, Market {market_home:.0f}%, Form {form_home:.0f}%'
                     })
             
             # Away Win
-            if api_recommendation == away_team and market_favorite == 'away' and ai_away >= 50:
-                impl_prob = (1 / best_away) * 100
-                ev = ((ai_away / 100) * best_away) - 1
-                if ev > 0:
+            if (combined_away >= 55 and
+                combined_away > market_away + 5 and
+                api_winner == away_team and
+                form_away >= 45 and
+                mw['away'] >= 1.4 and mw['away'] <= 3.5):
+                
+                impl_prob = (1 / mw['away']) * 100
+                ev = ((combined_away / 100) * mw['away']) - 1
+                confidence = (combined_away * 0.6 + poisson_away * 0.25 + ai_away * 0.15)
+                
+                if ev > 0.07:
                     all_bets.append({
                         'market': 'Match Winner',
                         'selection': f'{away_team} Win',
-                        'odds': best_away,
-                        'confidence': min(ai_away, 90),
-                        'ai_probability': ai_away,
+                        'odds': mw['away'],
+                        'confidence': min(confidence, 90),
+                        'ai_probability': combined_away,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': ai_away + (ev * 50),
+                        'quality_score': confidence + (ev * 150),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': mw_bookmaker,
-                        'has_10bet': mw_has_10bet,
-                        'reasoning': f'Strong away favorite. API & market agree. {ai_away:.0f}% confidence'
+                        'bookmaker': mw['bookmaker'],
+                        'has_10bet': mw['has_10bet'],
+                        'reasoning': f'Strong consensus: Poisson {poisson_away:.0f}%, AI {ai_away:.0f}%, Market {market_away:.0f}%, Form {form_away:.0f}%'
                     })
             
             # Draw
-            if ai_draw >= 28 and abs(ai_home - ai_away) < 12:
-                impl_prob = (1 / best_draw) * 100
-                ev = ((ai_draw / 100) * best_draw) - 1
-                if ev > 0.05:
+            if (combined_draw >= 30 and
+                combined_draw > market_draw + 8 and
+                abs(combined_home - combined_away) < 10 and
+                mw['draw'] >= 3.0 and mw['draw'] <= 4.5):
+                
+                impl_prob = (1 / mw['draw']) * 100
+                ev = ((combined_draw / 100) * mw['draw']) - 1
+                confidence = (combined_draw * 0.6 + poisson_draw * 0.25 + ai_draw * 0.15)
+                
+                if ev > 0.10:
                     all_bets.append({
                         'market': 'Match Winner',
                         'selection': 'Draw',
-                        'odds': best_draw,
-                        'confidence': min(ai_draw * 0.9, 75),
-                        'ai_probability': ai_draw,
+                        'odds': mw['draw'],
+                        'confidence': min(confidence * 0.85, 75),
+                        'ai_probability': combined_draw,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': ai_draw * 0.8 + (ev * 50),
+                        'quality_score': confidence * 0.8 + (ev * 140),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': mw_bookmaker,
-                        'has_10bet': mw_has_10bet,
-                        'reasoning': f'Evenly matched. {ai_draw:.0f}% draw probability with value'
+                        'bookmaker': mw['bookmaker'],
+                        'has_10bet': mw['has_10bet'],
+                        'reasoning': f'Evenly matched: Poisson {poisson_draw:.0f}%, AI {ai_draw:.0f}%, H2H {h2h_draw:.0f}%'
                     })
         
-        # === BTTS ===
-        btts_odds = self.extract_btts_odds(odds_response)
-        if btts_odds and home_avg > 0 and away_avg > 0:
-            # BTTS Yes
-            if home_avg >= 1.0 and away_avg >= 1.0:
-                btts_yes_prob = min(((home_avg + away_avg) / 4) * 100, 85)
-                impl_prob = (1 / btts_odds['yes']) * 100
-                ev = ((btts_yes_prob / 100) * btts_odds['yes']) - 1
-                if ev > 0 and btts_yes_prob >= 55:
+        # ========== BTTS - Using clean sheet & failed to score data ==========
+        btts = all_odds['btts']
+        if btts['yes'] > 0:
+            # BTTS Yes - both teams score regularly, few clean sheets
+            btts_yes_prob = 100
+            if home_goals_avg >= 1.0 and away_goals_avg >= 1.0:
+                btts_yes_prob = min(((home_goals_avg + away_goals_avg) / 3.5) * 100, 80)
+            
+            # Adjust by clean sheet frequency (less clean sheets = more BTTS yes)
+            if home_clean_sheets > 0 or away_clean_sheets > 0:
+                clean_sheet_factor = 1 - ((home_clean_sheets + away_clean_sheets) / 100)
+                btts_yes_prob *= max(clean_sheet_factor, 0.5)
+            
+            if (home_goals_avg >= 1.0 and away_goals_avg >= 1.0 and
+                home_failed_score <= 5 and away_failed_score <= 5 and
+                btts['yes'] >= 1.5 and btts['yes'] <= 2.4):
+                
+                impl_prob = (1 / btts['yes']) * 100
+                ev = ((btts_yes_prob / 100) * btts['yes']) - 1
+                
+                if ev > 0.08 and btts_yes_prob > impl_prob + 5:
                     all_bets.append({
                         'market': 'Both Teams To Score',
                         'selection': 'Yes',
-                        'odds': btts_odds['yes'],
+                        'odds': btts['yes'],
                         'confidence': btts_yes_prob,
                         'ai_probability': btts_yes_prob,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': btts_yes_prob + (ev * 40),
+                        'quality_score': btts_yes_prob + (ev * 150),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': btts_odds['bookmaker'],
-                        'has_10bet': btts_odds['has_10bet'],
-                        'reasoning': f'Both teams score regularly. {home_avg:.1f} & {away_avg:.1f} avg goals'
+                        'bookmaker': btts['bookmaker'],
+                        'has_10bet': btts['has_10bet'],
+                        'reasoning': f'Both score regularly: H {home_goals_avg:.1f} A {home_goals_avg:.1f} goals/game. Clean sheets: H:{home_clean_sheets} A:{away_clean_sheets}'
                     })
             
-            # BTTS No
-            elif home_avg < 0.9 or away_avg < 0.9:
-                btts_no_prob = min(100 - ((home_avg + away_avg) / 4) * 100, 80)
-                impl_prob = (1 / btts_odds['no']) * 100
-                ev = ((btts_no_prob / 100) * btts_odds['no']) - 1
-                if ev > 0 and btts_no_prob >= 55:
+            # BTTS No - one team weak in attack or strong defense
+            btts_no_prob = 0
+            if home_failed_score >= 8 or away_failed_score >= 8:
+                btts_no_prob = min(70 + (home_failed_score + away_failed_score), 80)
+            elif home_clean_sheets >= 8 or away_clean_sheets >= 8:
+                btts_no_prob = min(65 + (home_clean_sheets + away_clean_sheets) / 2, 80)
+            
+            if (btts_no_prob >= 60 and
+                btts['no'] >= 1.5 and btts['no'] <= 2.4):
+                
+                impl_prob = (1 / btts['no']) * 100
+                ev = ((btts_no_prob / 100) * btts['no']) - 1
+                
+                if ev > 0.08 and btts_no_prob > impl_prob + 5:
                     all_bets.append({
                         'market': 'Both Teams To Score',
                         'selection': 'No',
-                        'odds': btts_odds['no'],
+                        'odds': btts['no'],
                         'confidence': btts_no_prob,
                         'ai_probability': btts_no_prob,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': btts_no_prob + (ev * 40),
+                        'quality_score': btts_no_prob + (ev * 150),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': btts_odds['bookmaker'],
-                        'has_10bet': btts_odds['has_10bet'],
-                        'reasoning': f'Low scoring teams. {home_avg:.1f} & {away_avg:.1f} avg goals'
+                        'bookmaker': btts['bookmaker'],
+                        'has_10bet': btts['has_10bet'],
+                        'reasoning': f'Weak attack/strong defense. Failed to score: H:{home_failed_score} A:{away_failed_score}. Clean: H:{home_clean_sheets} A:{away_clean_sheets}'
                     })
         
-        # === OVER/UNDER ===
-        ou_odds = self.extract_over_under_odds(odds_response)
-        if ou_odds and total_avg > 0:
-            for line, odds_data in ou_odds.items():
-                try:
-                    line_float = float(line)
+        # ========== OVER/UNDER - Using API predicted score ranges ==========
+        for line, ou in all_odds['over_under'].items():
+            if ou['over'] == 0 or ou['under'] == 0:
+                continue
+            
+            try:
+                line_float = float(line)
+                
+                # Use API's predicted total + attack strength
+                expected_goals = predicted_total_avg
+                attack_boost = ((att_home + att_away) / 100 - 1) * 0.5  # Boost if strong attack
+                expected_goals += attack_boost
+                
+                # Over
+                if (expected_goals > line_float + 0.4 and
+                    ou['over'] >= 1.6 and ou['over'] <= 2.3):
                     
-                    # Over
-                    if total_avg > line_float + 0.3:
-                        over_prob = min(55 + (total_avg - line_float) * 10, 80)
-                        impl_prob = (1 / odds_data['over']) * 100
-                        ev = ((over_prob / 100) * odds_data['over']) - 1
-                        if ev > 0 and over_prob > impl_prob:
-                            all_bets.append({
-                                'market': f'Over/Under {line}',
-                                'selection': f'Over {line}',
-                                'odds': odds_data['over'],
-                                'confidence': over_prob,
-                                'ai_probability': over_prob,
-                                'implied_probability': impl_prob,
-                                'expected_value': ev,
-                                'quality_score': over_prob + (ev * 45),
-                                'api_agrees': True,
-                                'market_agrees': True,
-                                'bookmaker': odds_data['bookmaker'],
-                                'has_10bet': odds_data['has_10bet'],
-                                'reasoning': f'Expected {total_avg:.1f} goals. {total_avg - line_float:.1f} above {line} line'
-                            })
+                    over_prob = min(58 + (expected_goals - line_float) * 9, 78)
                     
-                    # Under
-                    elif total_avg < line_float - 0.3:
-                        under_prob = min(55 + (line_float - total_avg) * 10, 80)
-                        impl_prob = (1 / odds_data['under']) * 100
-                        ev = ((under_prob / 100) * odds_data['under']) - 1
-                        if ev > 0 and under_prob > impl_prob:
-                            all_bets.append({
-                                'market': f'Over/Under {line}',
-                                'selection': f'Under {line}',
-                                'odds': odds_data['under'],
-                                'confidence': under_prob,
-                                'ai_probability': under_prob,
-                                'implied_probability': impl_prob,
-                                'expected_value': ev,
-                                'quality_score': under_prob + (ev * 45),
-                                'api_agrees': True,
-                                'market_agrees': True,
-                                'bookmaker': odds_data['bookmaker'],
-                                'has_10bet': odds_data['has_10bet'],
-                                'reasoning': f'Expected {total_avg:.1f} goals. {line_float - total_avg:.1f} below {line} line'
-                            })
-                except:
-                    continue
+                    # Boost if API explicitly says "Over X.X"
+                    if api_under_over and 'Over' in api_under_over and line in api_under_over:
+                        over_prob += 5
+                    
+                    impl_prob = (1 / ou['over']) * 100
+                    ev = ((over_prob / 100) * ou['over']) - 1
+                    
+                    if ev > 0.08 and over_prob > impl_prob + 5:
+                        all_bets.append({
+                            'market': f'Over/Under {line}',
+                            'selection': f'Over {line}',
+                            'odds': ou['over'],
+                            'confidence': over_prob,
+                            'ai_probability': over_prob,
+                            'implied_probability': impl_prob,
+                            'expected_value': ev,
+                            'quality_score': over_prob + (ev * 150),
+                            'api_agrees': True,
+                            'market_agrees': True,
+                            'bookmaker': ou['bookmaker'],
+                            'has_10bet': ou['has_10bet'],
+                            'reasoning': f'API predicts {predicted_total_avg:.1f} goals ({predicted_total_min:.1f}-{predicted_total_max:.1f}). Attack: H:{att_home:.0f}% A:{att_away:.0f}%'
+                        })
+                
+                # Under
+                elif (expected_goals < line_float - 0.4 and
+                      ou['under'] >= 1.6 and ou['under'] <= 2.3):
+                    
+                    under_prob = min(58 + (line_float - expected_goals) * 9, 78)
+                    
+                    # Boost if API explicitly says "Under X.X"
+                    if api_under_over and 'Under' in api_under_over and line in api_under_over:
+                        under_prob += 5
+                    
+                    impl_prob = (1 / ou['under']) * 100
+                    ev = ((under_prob / 100) * ou['under']) - 1
+                    
+                    if ev > 0.08 and under_prob > impl_prob + 5:
+                        all_bets.append({
+                            'market': f'Over/Under {line}',
+                            'selection': f'Under {line}',
+                            'odds': ou['under'],
+                            'confidence': under_prob,
+                            'ai_probability': under_prob,
+                            'implied_probability': impl_prob,
+                            'expected_value': ev,
+                            'quality_score': under_prob + (ev * 150),
+                            'api_agrees': True,
+                            'market_agrees': True,
+                            'bookmaker': ou['bookmaker'],
+                            'has_10bet': ou['has_10bet'],
+                            'reasoning': f'API predicts {predicted_total_avg:.1f} goals ({predicted_total_min:.1f}-{predicted_total_max:.1f}). Defense: H:{def_home:.0f}% A:{def_away:.0f}%'
+                        })
+            except:
+                continue
         
-        # === DOUBLE CHANCE ===
-        dc_odds = self.extract_double_chance_odds(odds_response)
-        if dc_odds:
-            # 1X (Home or Draw)
-            if ai_home + ai_draw >= 70:
-                dc_prob = ai_home + ai_draw
-                impl_prob = (1 / dc_odds['1X']) * 100
-                ev = ((dc_prob / 100) * dc_odds['1X']) - 1
-                if ev > 0:
+        # ========== DOUBLE CHANCE ==========
+        dc = all_odds['double_chance']
+        if dc['1X'] > 0:
+            # 1X
+            if combined_home + combined_draw >= 75 and dc['1X'] >= 1.15 and dc['1X'] <= 1.6:
+                dc_prob = combined_home + combined_draw
+                impl_prob = (1 / dc['1X']) * 100
+                ev = ((dc_prob / 100) * dc['1X']) - 1
+                
+                if ev > 0.04:
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{home_team} or Draw',
-                        'odds': dc_odds['1X'],
-                        'confidence': min(dc_prob * 0.9, 88),
+                        'odds': dc['1X'],
+                        'confidence': min(dc_prob * 0.9, 87),
                         'ai_probability': dc_prob,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': dc_prob * 0.9 + (ev * 35),
+                        'quality_score': dc_prob * 0.85 + (ev * 130),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': dc_odds['bookmaker'],
-                        'has_10bet': dc_odds['has_10bet'],
-                        'reasoning': f'Safe bet: {home_team} ({ai_home:.0f}%) or Draw ({ai_draw:.0f}%)'
+                        'bookmaker': dc['bookmaker'],
+                        'has_10bet': dc['has_10bet'],
+                        'reasoning': f'Safe combo: Home {combined_home:.0f}% + Draw {combined_draw:.0f}%'
                     })
             
-            # X2 (Draw or Away)
-            if ai_away + ai_draw >= 70:
-                dc_prob = ai_away + ai_draw
-                impl_prob = (1 / dc_odds['X2']) * 100
-                ev = ((dc_prob / 100) * dc_odds['X2']) - 1
-                if ev > 0:
+            # X2
+            if combined_away + combined_draw >= 75 and dc['X2'] >= 1.15 and dc['X2'] <= 1.6:
+                dc_prob = combined_away + combined_draw
+                impl_prob = (1 / dc['X2']) * 100
+                ev = ((dc_prob / 100) * dc['X2']) - 1
+                
+                if ev > 0.04:
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{away_team} or Draw',
-                        'odds': dc_odds['X2'],
-                        'confidence': min(dc_prob * 0.9, 88),
+                        'odds': dc['X2'],
+                        'confidence': min(dc_prob * 0.9, 87),
                         'ai_probability': dc_prob,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': dc_prob * 0.9 + (ev * 35),
+                        'quality_score': dc_prob * 0.85 + (ev * 130),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': dc_odds['bookmaker'],
-                        'has_10bet': dc_odds['has_10bet'],
-                        'reasoning': f'Safe bet: {away_team} ({ai_away:.0f}%) or Draw ({ai_draw:.0f}%)'
+                        'bookmaker': dc['bookmaker'],
+                        'has_10bet': dc['has_10bet'],
+                        'reasoning': f'Safe combo: Away {combined_away:.0f}% + Draw {combined_draw:.0f}%'
                     })
             
-            # 12 (Home or Away)
-            if ai_home + ai_away >= 75:
-                dc_prob = ai_home + ai_away
-                impl_prob = (1 / dc_odds['12']) * 100
-                ev = ((dc_prob / 100) * dc_odds['12']) - 1
-                if ev > 0:
+            # 12
+            if combined_home + combined_away >= 78 and combined_draw < 20 and dc['12'] >= 1.12 and dc['12'] <= 1.5:
+                dc_prob = combined_home + combined_away
+                impl_prob = (1 / dc['12']) * 100
+                ev = ((dc_prob / 100) * dc['12']) - 1
+                
+                if ev > 0.04:
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{home_team} or {away_team}',
-                        'odds': dc_odds['12'],
-                        'confidence': min(dc_prob * 0.9, 88),
+                        'odds': dc['12'],
+                        'confidence': min(dc_prob * 0.9, 87),
                         'ai_probability': dc_prob,
                         'implied_probability': impl_prob,
                         'expected_value': ev,
-                        'quality_score': dc_prob * 0.9 + (ev * 35),
+                        'quality_score': dc_prob * 0.85 + (ev * 130),
                         'api_agrees': True,
                         'market_agrees': True,
-                        'bookmaker': dc_odds['bookmaker'],
-                        'has_10bet': dc_odds['has_10bet'],
-                        'reasoning': f'Draw unlikely ({ai_draw:.0f}%). Either team can win'
+                        'bookmaker': dc['bookmaker'],
+                        'has_10bet': dc['has_10bet'],
+                        'reasoning': f'Draw unlikely {combined_draw:.0f}%. Either team wins'
                     })
         
         if not all_bets:
-            print(f"      ❌ No validated bets found")
+            print(f"      ❌ No high-quality bets")
             return None
         
-        # Sort by quality score (combines confidence + EV)
+        # Sort by quality score
         all_bets.sort(key=lambda x: x['quality_score'], reverse=True)
         
-        print(f"      ✅ Found {len(all_bets)} validated bets across all markets")
+        print(f"      ✅ {len(all_bets)} validated bets")
         
         return {
             'fixture_id': fixture_id,
@@ -656,7 +652,7 @@ analyzer = None
 def get_analyzer():
     global analyzer
     if analyzer is None:
-        analyzer = AdvancedBettingAnalyzer(API_KEY)
+        analyzer = UltimateBettingAnalyzer(API_KEY)
     return analyzer
 
 @app.route('/')
@@ -670,7 +666,6 @@ def api_status():
     
     try:
         test_data = get_analyzer().make_request('status')
-        
         if test_data and 'response' in test_data:
             account = test_data['response']
             return jsonify({
@@ -682,8 +677,7 @@ def api_status():
                     'subscription': account.get('subscription', {}).get('plan', 'Unknown')
                 }
             })
-        else:
-            return jsonify({'success': False, 'error': 'Unable to connect'}), 500
+        return jsonify({'success': False, 'error': 'Unable to connect'}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -694,7 +688,8 @@ def get_analysis():
     
     try:
         print("\n" + "="*80)
-        print("BALANCED MULTI-MARKET BETTING ANALYSIS")
+        print("ULTIMATE MULTI-SOURCE BETTING ANALYSIS")
+        print("Using: Poisson, AI, Market, H2H, Form, Attack, Defense, Clean Sheets, Predicted Scores")
         print("="*80)
         
         fixtures = get_analyzer().get_todays_fixtures()
@@ -706,26 +701,22 @@ def get_analysis():
                 'date': datetime.now().strftime('%Y-%m-%d'),
                 'matches': [],
                 'total_fixtures': 0,
-                'message': 'No upcoming fixtures for today'
+                'message': 'No upcoming fixtures'
             })
         
         match_analyses = []
         
         for i, fixture in enumerate(fixtures, 1):
             print(f"\n[{i}/{len(fixtures)}]")
-            
-            analysis = get_analyzer().analyze_all_markets(fixture)
-            
+            analysis = get_analyzer().analyze_comprehensive(fixture)
             if analysis:
                 match_analyses.append(analysis)
-            
-            # Rate limiting
             if i % 5 == 0:
                 import time
                 time.sleep(0.5)
         
         print(f"\n{'='*80}")
-        print(f"✅ Analyzed {len(match_analyses)} matches with validated bets")
+        print(f"✅ {len(match_analyses)} matches analyzed with comprehensive data")
         print(f"{'='*80}")
         
         return jsonify({
@@ -744,7 +735,6 @@ def get_analysis():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
-    print(f"\n🧠 Starting Balanced Multi-Market Betting Optimizer on port {port}")
-    print(f"✅ API Key configured: {bool(API_KEY)}")
-    print(f"📊 All Markets Analyzed Equally: Match Winner, BTTS, O/U, Double Chance")
+    print(f"\n🧠 ULTIMATE Multi-Source Betting Optimizer")
+    print(f"📊 Combining: Poisson, AI%, Market%, H2H, Form, Att/Def, Clean Sheets, Predicted Scores")
     app.run(host='0.0.0.0', port=port, debug=False)
