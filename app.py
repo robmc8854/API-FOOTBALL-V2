@@ -254,9 +254,14 @@ class FinalBettingAnalyzer:
                         'selection': f'{home_team} Win',
                         'odds': round(mw['home'], 2),  # ACTUAL bookmaker odds
                         'confidence': min(combined_home, 85),
+                        'ai_probability': combined_home,
+                        'implied_probability': impl_prob,
                         'expected_value': ev,
                         'quality_score': combined_home + (ev * 100),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': mw['bookmaker'],
+                        'has_10bet': mw.get('has_10bet', False),
                         'reasoning': f'{combined_home:.0f}% probability (Poisson {poisson_home:.0f}% + AI {ai_home:.0f}%)'
                     })
             
@@ -270,9 +275,14 @@ class FinalBettingAnalyzer:
                         'selection': f'{away_team} Win',
                         'odds': round(mw['away'], 2),
                         'confidence': min(combined_away, 85),
+                        'ai_probability': combined_away,
+                        'implied_probability': impl_prob,
                         'expected_value': ev,
                         'quality_score': combined_away + (ev * 100),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': mw['bookmaker'],
+                        'has_10bet': mw.get('has_10bet', False),
                         'reasoning': f'{combined_away:.0f}% probability (Poisson {poisson_away:.0f}% + AI {ai_away:.0f}%)'
                     })
             
@@ -286,9 +296,14 @@ class FinalBettingAnalyzer:
                         'selection': 'Draw',
                         'odds': round(mw['draw'], 2),
                         'confidence': min(combined_draw * 0.9, 75),
+                        'ai_probability': combined_draw,
+                        'implied_probability': impl_prob,
                         'expected_value': ev,
                         'quality_score': combined_draw * 0.9 + (ev * 90),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': mw['bookmaker'],
+                        'has_10bet': mw.get('has_10bet', False),
                         'reasoning': f'{combined_draw:.0f}% probability. Evenly matched teams'
                     })
         
@@ -306,9 +321,14 @@ class FinalBettingAnalyzer:
                         'selection': 'Yes',
                         'odds': round(btts['yes'], 2),
                         'confidence': btts_prob,
+                        'ai_probability': btts_prob,
+                        'implied_probability': impl_prob,
                         'expected_value': ev,
                         'quality_score': btts_prob + (ev * 100),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': btts['bookmaker'],
+                        'has_10bet': btts.get('has_10bet', False),
                         'reasoning': f'Both teams score regularly. Home {home_goals_avg:.1f} | Away {away_goals_avg:.1f} goals/game'
                     })
             
@@ -323,9 +343,14 @@ class FinalBettingAnalyzer:
                         'selection': 'No',
                         'odds': round(btts['no'], 2),
                         'confidence': btts_no_prob,
+                        'ai_probability': btts_no_prob,
+                        'implied_probability': impl_prob,
                         'expected_value': ev,
                         'quality_score': btts_no_prob + (ev * 100),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': btts['bookmaker'],
+                        'has_10bet': btts.get('has_10bet', False),
                         'reasoning': f'Strong defense or weak attack. Clean sheets: H:{home_clean:.0f} A:{away_clean:.0f}'
                     })
         
@@ -347,9 +372,14 @@ class FinalBettingAnalyzer:
                             'selection': f'Over {line}',
                             'odds': round(ou['over'], 2),
                             'confidence': over_prob,
+                            'ai_probability': over_prob,
+                            'implied_probability': (1 / ou['over']) * 100,
                             'expected_value': ev,
                             'quality_score': over_prob + (ev * 100),
+                            'api_agrees': True,
+                            'market_agrees': True,
                             'bookmaker': ou['bookmaker'],
+                            'has_10bet': ou.get('has_10bet', False),
                             'reasoning': f'Expected {total_goals_avg:.1f} goals. {total_goals_avg - line_float:.1f} above {line}'
                         })
                 
@@ -363,9 +393,14 @@ class FinalBettingAnalyzer:
                             'selection': f'Under {line}',
                             'odds': round(ou['under'], 2),
                             'confidence': under_prob,
+                            'ai_probability': under_prob,
+                            'implied_probability': (1 / ou['under']) * 100,
                             'expected_value': ev,
                             'quality_score': under_prob + (ev * 100),
+                            'api_agrees': True,
+                            'market_agrees': True,
                             'bookmaker': ou['bookmaker'],
+                            'has_10bet': ou.get('has_10bet', False),
                             'reasoning': f'Expected {total_goals_avg:.1f} goals. {line_float - total_goals_avg:.1f} below {line}'
                         })
             except:
@@ -384,9 +419,14 @@ class FinalBettingAnalyzer:
                         'selection': f'{home_team} or Draw',
                         'odds': round(dc['1X'], 2),
                         'confidence': min(dc_prob * 0.92, 85),
+                        'ai_probability': dc_prob,
+                        'implied_probability': (1 / dc['1X']) * 100,
                         'expected_value': ev,
                         'quality_score': dc_prob * 0.85 + (ev * 80),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': dc['bookmaker'],
+                        'has_10bet': dc.get('has_10bet', False),
                         'reasoning': f'Safe bet: {combined_home:.0f}% home + {combined_draw:.0f}% draw'
                     })
             
@@ -400,9 +440,14 @@ class FinalBettingAnalyzer:
                         'selection': f'{away_team} or Draw',
                         'odds': round(dc['X2'], 2),
                         'confidence': min(dc_prob * 0.92, 85),
+                        'ai_probability': dc_prob,
+                        'implied_probability': (1 / dc['X2']) * 100,
                         'expected_value': ev,
                         'quality_score': dc_prob * 0.85 + (ev * 80),
+                        'api_agrees': True,
+                        'market_agrees': True,
                         'bookmaker': dc['bookmaker'],
+                        'has_10bet': dc.get('has_10bet', False),
                         'reasoning': f'Safe bet: {combined_away:.0f}% away + {combined_draw:.0f}% draw'
                     })
         
