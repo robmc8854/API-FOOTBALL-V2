@@ -309,13 +309,28 @@ class CompleteBettingAnalyzer:
         
         # === GOALS DATA ===
         goals_pred = predictions.get('goals', {})
-        home_goals_str = goals_pred.get('home', '0-0')
-        away_goals_str = goals_pred.get('away', '0-0')
+        home_goals_str = goals_pred.get('home', '1-1')
+        away_goals_str = goals_pred.get('away', '1-1')
         
-        home_goals_parts = home_goals_str.split('-')
-        away_goals_parts = away_goals_str.split('-')
-        home_goals_avg = (self.safe_float(home_goals_parts[0]) + self.safe_float(home_goals_parts[1] if len(home_goals_parts) > 1 else home_goals_parts[0])) / 2
-        away_goals_avg_pred = (self.safe_float(away_goals_parts[0]) + self.safe_float(away_goals_parts[1] if len(away_goals_parts) > 1 else away_goals_parts[0])) / 2
+        # Safely parse goals
+        try:
+            if home_goals_str and '-' in str(home_goals_str):
+                home_goals_parts = str(home_goals_str).split('-')
+                home_goals_avg = (self.safe_float(home_goals_parts[0]) + self.safe_float(home_goals_parts[1])) / 2
+            else:
+                home_goals_avg = self.safe_float(home_goals_str, 1.0)
+        except:
+            home_goals_avg = 1.0
+        
+        try:
+            if away_goals_str and '-' in str(away_goals_str):
+                away_goals_parts = str(away_goals_str).split('-')
+                away_goals_avg_pred = (self.safe_float(away_goals_parts[0]) + self.safe_float(away_goals_parts[1])) / 2
+            else:
+                away_goals_avg_pred = self.safe_float(away_goals_str, 1.0)
+        except:
+            away_goals_avg_pred = 1.0
+        
         predicted_total = home_goals_avg + away_goals_avg_pred
         
         # === TEAM LEAGUE STATS ===
