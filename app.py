@@ -245,10 +245,10 @@ class FinalBettingAnalyzer:
         mw = all_odds['match_winner']
         if mw['home'] > 0:
             # Home
-            if combined_home >= 40 and mw['home'] >= 1.3 and mw['home'] <= 4.0:
+            if combined_home >= 45 and mw['home'] >= 1.5 and mw['home'] <= 3.0:
                 impl_prob = (1 / mw['home']) * 100
                 ev = ((combined_home / 100) * mw['home']) - 1
-                if ev > 0:
+                if ev > 0.05 and combined_home > impl_prob:
                     all_bets.append({
                         'market': 'Match Winner',
                         'selection': f'{home_team} Win',
@@ -266,10 +266,10 @@ class FinalBettingAnalyzer:
                     })
             
             # Away
-            if combined_away >= 40 and mw['away'] >= 1.3 and mw['away'] <= 4.0:
+            if combined_away >= 45 and mw['away'] >= 1.5 and mw['away'] <= 3.0:
                 impl_prob = (1 / mw['away']) * 100
                 ev = ((combined_away / 100) * mw['away']) - 1
-                if ev > 0:
+                if ev > 0.05 and combined_away > impl_prob:
                     all_bets.append({
                         'market': 'Match Winner',
                         'selection': f'{away_team} Win',
@@ -287,10 +287,10 @@ class FinalBettingAnalyzer:
                     })
             
             # Draw
-            if combined_draw >= 22 and mw['draw'] >= 2.5 and mw['draw'] <= 5.0:
+            if combined_draw >= 25 and mw['draw'] >= 3.0 and mw['draw'] <= 4.5:
                 impl_prob = (1 / mw['draw']) * 100
                 ev = ((combined_draw / 100) * mw['draw']) - 1
-                if ev > 0.03:
+                if ev > 0.08 and combined_draw > impl_prob:
                     all_bets.append({
                         'market': 'Match Winner',
                         'selection': 'Draw',
@@ -311,11 +311,11 @@ class FinalBettingAnalyzer:
         btts = all_odds['btts']
         if btts['yes'] > 0:
             # Yes
-            if home_goals_avg >= 0.8 and away_goals_avg >= 0.8:
-                btts_prob = min(50 + (home_goals_avg + away_goals_avg - 1.6) * 15, 75)
+            if home_goals_avg >= 0.9 and away_goals_avg >= 0.9:
+                btts_prob = min(50 + (home_goals_avg + away_goals_avg - 1.8) * 15, 75)
                 impl_prob = (1 / btts['yes']) * 100
                 ev = ((btts_prob / 100) * btts['yes']) - 1
-                if ev > 0:
+                if ev > 0.05 and btts_prob > impl_prob and btts['yes'] >= 1.6 and btts['yes'] <= 2.3:
                     all_bets.append({
                         'market': 'Both Teams To Score',
                         'selection': 'Yes',
@@ -337,7 +337,7 @@ class FinalBettingAnalyzer:
                 btts_no_prob = min(50 + (home_clean + away_clean), 75)
                 impl_prob = (1 / btts['no']) * 100
                 ev = ((btts_no_prob / 100) * btts['no']) - 1
-                if ev > 0:
+                if ev > 0.05 and btts_no_prob > impl_prob and btts['no'] >= 1.6 and btts['no'] <= 2.3:
                     all_bets.append({
                         'market': 'Both Teams To Score',
                         'selection': 'No',
@@ -363,10 +363,10 @@ class FinalBettingAnalyzer:
                 line_float = float(line)
                 
                 # Over
-                if total_goals_avg > line_float + 0.25:
+                if total_goals_avg > line_float + 0.3:
                     over_prob = min(50 + (total_goals_avg - line_float) * 12, 75)
                     ev = ((over_prob / 100) * ou['over']) - 1
-                    if ev > 0:
+                    if ev > 0.05 and over_prob > (1 / ou['over']) * 100 and ou['over'] >= 1.65 and ou['over'] <= 2.2:
                         all_bets.append({
                             'market': f'Over/Under {line}',
                             'selection': f'Over {line}',
@@ -384,10 +384,10 @@ class FinalBettingAnalyzer:
                         })
                 
                 # Under
-                elif total_goals_avg < line_float - 0.25:
+                elif total_goals_avg < line_float - 0.3:
                     under_prob = min(50 + (line_float - total_goals_avg) * 12, 75)
                     ev = ((under_prob / 100) * ou['under']) - 1
-                    if ev > 0:
+                    if ev > 0.05 and under_prob > (1 / ou['under']) * 100 and ou['under'] >= 1.65 and ou['under'] <= 2.2:
                         all_bets.append({
                             'market': f'Over/Under {line}',
                             'selection': f'Under {line}',
@@ -410,10 +410,10 @@ class FinalBettingAnalyzer:
         dc = all_odds['double_chance']
         if dc['1X'] > 0:
             # 1X
-            if combined_home + combined_draw >= 60 and dc['1X'] >= 1.08 and dc['1X'] <= 1.8:
+            if combined_home + combined_draw >= 65 and dc['1X'] >= 1.15 and dc['1X'] <= 1.6:
                 dc_prob = combined_home + combined_draw
                 ev = ((dc_prob / 100) * dc['1X']) - 1
-                if ev > 0:
+                if ev > 0.03 and dc_prob > (1 / dc['1X']) * 100:
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{home_team} or Draw',
@@ -431,10 +431,10 @@ class FinalBettingAnalyzer:
                     })
             
             # X2
-            if combined_away + combined_draw >= 60 and dc['X2'] >= 1.08 and dc['X2'] <= 1.8:
+            if combined_away + combined_draw >= 65 and dc['X2'] >= 1.15 and dc['X2'] <= 1.6:
                 dc_prob = combined_away + combined_draw
                 ev = ((dc_prob / 100) * dc['X2']) - 1
-                if ev > 0:
+                if ev > 0.03 and dc_prob > (1 / dc['X2']) * 100:
                     all_bets.append({
                         'market': 'Double Chance',
                         'selection': f'{away_team} or Draw',
